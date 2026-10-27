@@ -12,7 +12,7 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | **Plain React (SPA)** | Google struggles to index client-only pages; poor SEO = no organic traffic. |
 | **Next.js (chosen ✅)** | Every page is pre-rendered as static HTML → perfect Google indexing, ~110 KB JS, loads in milliseconds, deploys free on Vercel/Cloudflare. Tools still run 100% client-side. Best of both worlds. |
 
-## 2. Tools included (11 — all fully working, no placeholders)
+## 2. Tools included (28 — all fully working, no placeholders)
 
 | Tool | URL | How it works |
 |---|---|---|
@@ -42,6 +42,7 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | HEIC to JPG | `/tools/heic-to-jpg` | heic2any (CDN) bulk decode |
 | Image to Text (OCR) | `/tools/image-to-text` | Tesseract.js (CDN), 8 languages incl. Urdu |
 | QR Scanner | `/tools/qr-scanner` | jsQR (CDN) camera + image scanning, link preview |
+| Document Scanner | `/tools/document-scanner` | OpenCV.js (CDN) auto page-corner detection + manual drag corners, homography flattening, adaptive photocopy cleanup, Auto/A4/Letter/A5/Legal/ID sizes, multi-page PDF/ZIP |
 
 **Homepage highlights:** animated SVG/CSS diagrams that visually explain video compression, AI background removal, image compression and the "no upload" privacy model · live tool search + category filters · comparison table · FAQ with schema.
 

@@ -12,7 +12,7 @@ export const metadata = {
   description: SITE_DESCRIPTION,
   keywords: [
     "free online tools", "video compressor", "image compressor", "jpg compressor",
-    "png compressor", "background remover", "image resizer", "image converter",
+    "png compressor", "background remover", "ai image enhancer", "image upscaler", "image resizer", "image converter",
     "image to pdf", "qr code generator", "no sign up tools",
   ],
   authors: [{ name: SITE_NAME }],

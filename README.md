@@ -18,6 +18,7 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 |---|---|---|
 | Video Compressor | `/tools/video-compressor` | Canvas + MediaRecorder re-encode (presets for WhatsApp/email) |
 | AI Background Remover | `/tools/background-remover` | On-device AI (`@imgly/background-removal`, loaded from CDN at runtime) |
+| AI Image Enhancer | `/tools/image-enhancer` | UpscalerJS ESRGAN-Slim 2x/4x via CDN + sharpen/denoise finish (Fast Enhance fallback) |
 | Image Compressor | `/tools/image-compressor` | Canvas re-encode, bulk up to 50, ZIP download |
 | JPG Compressor | `/tools/jpg-compressor` | Same engine, tuned + unique SEO page for "compress jpg" searches |
 | PNG Compressor | `/tools/png-compressor` | Lossless PNG or transparency-preserving WebP |
@@ -90,6 +91,7 @@ lib/
 
 - **Video Compressor** re-encodes in near-real-time in the browser (a 3-minute video takes ~3 minutes; output is MP4 where supported, otherwise WebM). This is the trade-off for zero server costs and total privacy — and it still beats uploading a 500 MB file on slow connections. Keep the tab visible while it runs.
 - **Background Remover** downloads its AI model once on first use (cached afterwards; the "small" model is the fast default). Works best in up-to-date Chrome/Edge/Firefox; very low-memory phones may struggle with huge photos.
+- **Image Enhancer** downloads its ESRGAN model from a CDN on first use and infers in 64px patches (with cancel + progress). Large 4x jobs can take minutes on weak phones — the input cap (default 1024px) and the Fast Enhance fallback keep it usable everywhere. AI output is a plausible reconstruction of detail, not a perfect recovery of information that was never in the file.
 - Huge files are limited only by the visitor's device memory — there are no server-imposed caps because there is no server processing at all.
 
 ## 9. Costs when traffic grows

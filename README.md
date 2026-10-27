@@ -28,6 +28,20 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | QR Code Generator | `/tools/qr-code-generator` | URL / text / Wi-Fi / email / phone, PNG + SVG |
 | Password Generator | `/tools/password-generator` | Web Crypto randomness + entropy meter |
 | Word Counter | `/tools/word-counter` | Words/chars/reading time/keyword density |
+| Merge PDF / Split PDF | `/tools/merge-pdf`, `/tools/split-pdf` | pdf-lib (CDN) lossless page copy, reorder/extract/delete |
+| Compress PDF | `/tools/compress-pdf` | PDF.js rebuild at 150/120/96 DPI or lossless structure optimize |
+| PDF to JPG | `/tools/pdf-to-jpg` | PDF.js rendering 72–300 DPI, per-page/ZIP download |
+| Compress Image to KB | `/tools/compress-image-to-kb` | Binary-search quality/size to hit an exact KB target |
+| Passport Photo Maker | `/tools/passport-photo-maker` | 300-DPI official sizes, optional AI background, A4 print sheet |
+| Resume / CV Maker | `/tools/resume-maker` | 3 templates, localStorage autosave, print-to-PDF output |
+| Video to GIF | `/tools/video-to-gif` | gif.js with seek-capture frames, blob-worker workaround |
+| Video Trimmer | `/tools/video-trimmer` | Canvas + MediaRecorder segment recording |
+| Screen Recorder | `/tools/screen-recorder` | getDisplayMedia + MediaRecorder, optional mic |
+| Video to MP3 | `/tools/video-to-mp3` | WebAudio decode + lamejs MP3 encode (128–320 kbps) |
+| Image Cropper | `/tools/image-cropper` | Draggable crop box, aspect locks, circle crop, rotate/flip |
+| HEIC to JPG | `/tools/heic-to-jpg` | heic2any (CDN) bulk decode |
+| Image to Text (OCR) | `/tools/image-to-text` | Tesseract.js (CDN), 8 languages incl. Urdu |
+| QR Scanner | `/tools/qr-scanner` | jsQR (CDN) camera + image scanning, link preview |
 
 **Homepage highlights:** animated SVG/CSS diagrams that visually explain video compression, AI background removal, image compression and the "no upload" privacy model · live tool search + category filters · comparison table · FAQ with schema.
 

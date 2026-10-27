@@ -1,0 +1,25 @@
+{
+  "name": "tools-stars",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tools Stars — Free online tools that run 100% in your browser. No sign-up, no uploads.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "jszip": "^3.10.1",
+    "jspdf": "^3.0.3",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "tailwindcss": "^4.1.13",
+    "postcss": "^8.5.6"
+  }
+}

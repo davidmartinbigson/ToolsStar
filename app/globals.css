@@ -1,0 +1,184 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #05060f;
+  --color-ink-2: #090b1a;
+  --color-panel: #0b0e1f;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-star: #ffc531;
+  --color-star-2: #ff9d2e;
+  --color-violet-x: #7c5cff;
+  --color-cyan-x: #22d3ee;
+  --font-sans: ui-sans-system, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+body {
+  background: var(--color-ink);
+  color: #e8eaf6;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+::selection {
+  background: #ffc531;
+  color: #191200;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #07081a; }
+::-webkit-scrollbar-thumb { background: #262b4d; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #39406b; }
+
+input[type="range"] { accent-color: #ffc531; }
+input[type="checkbox"], input[type="radio"] { accent-color: #ffc531; }
+
+/* transparent-checkerboard (used by BG remover + diagrams) */
+.checker {
+  background-color: #1a1d33;
+  background-image:
+    linear-gradient(45deg, #262a47 25%, transparent 25%),
+    linear-gradient(-45deg, #262a47 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #262a47 75%),
+    linear-gradient(-45deg, transparent 75%, #262a47 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.checker-light {
+  background-color: #d7d9e8;
+  background-image:
+    linear-gradient(45deg, #ffffff 25%, transparent 25%),
+    linear-gradient(-45deg, #ffffff 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ffffff 75%),
+    linear-gradient(-45deg, transparent 75%, #ffffff 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+}
+
+/* dotted grid backdrop */
+.dotgrid {
+  background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+/* ── Keyframes for the animated diagrams ─────────────────────────────────── */
+@keyframes twinkle {
+  0%, 100% { opacity: .12; transform: scale(.65) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.15) rotate(20deg); }
+}
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+@keyframes scanY {
+  0%, 12% { top: 2%; opacity: 0; }
+  20% { opacity: 1; }
+  80% { top: 94%; opacity: 1; }
+  92%, 100% { top: 94%; opacity: 0; }
+}
+@keyframes filmMove {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes dashFlow {
+  to { stroke-dashoffset: -28; }
+}
+@keyframes eqBar {
+  0%, 100% { transform: scaleY(.35); }
+  50% { transform: scaleY(1); }
+}
+@keyframes shrinkPulse {
+  0%, 18% { transform: scale(1); }
+  55%, 82% { transform: scale(.58); }
+  100% { transform: scale(1); }
+}
+@keyframes thumbSlide {
+  0%, 15% { left: 6%; }
+  55%, 80% { left: 82%; }
+  100% { left: 6%; }
+}
+@keyframes barShrink {
+  0%, 15% { width: 100%; }
+  55%, 80% { width: 18%; }
+  100% { width: 100%; }
+}
+@keyframes revealMask {
+  0%, 18% { clip-path: inset(0 100% 0 0); }
+  60%, 85% { clip-path: inset(0 0 0 0); }
+  100% { clip-path: inset(0 100% 0 0); }
+}
+@keyframes wipeLine {
+  0%, 18% { left: 0%; opacity: 0; }
+  24% { opacity: 1; }
+  60%, 85% { left: 99%; opacity: 1; }
+  92%, 100% { left: 99%; opacity: 0; }
+}
+@keyframes pixelFade {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .25; }
+}
+@keyframes spinSlow {
+  to { transform: rotate(360deg); }
+}
+@keyframes pulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(255,197,49,.45); }
+  70% { box-shadow: 0 0 0 14px rgba(255,197,49,0); }
+  100% { box-shadow: 0 0 0 0 rgba(255,197,49,0); }
+}
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(22px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes marqueeX {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes countGlow {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+@keyframes dropBob {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(6px) scale(1.03); }
+}
+
+.anim-twinkle { animation: twinkle 3.4s ease-in-out infinite; }
+.anim-floaty { animation: floaty 5s ease-in-out infinite; }
+.anim-scan { animation: scanY 3.6s ease-in-out infinite; }
+.anim-film { animation: filmMove 3s linear infinite; }
+.anim-eq { transform-origin: bottom; animation: eqBar 1.6s ease-in-out infinite; }
+.anim-shrink { transform-origin: center; animation: shrinkPulse 4.4s ease-in-out infinite; }
+.anim-thumb { animation: thumbSlide 4.4s ease-in-out infinite; }
+.anim-barshrink { animation: barShrink 4.4s ease-in-out infinite; }
+.anim-reveal { animation: revealMask 5s ease-in-out infinite; }
+.anim-wipe { animation: wipeLine 5s ease-in-out infinite; }
+.anim-spin-slow { animation: spinSlow 10s linear infinite; }
+.anim-ring { animation: pulseRing 2.4s ease-out infinite; }
+.anim-rise { animation: riseIn .7s cubic-bezier(.2,.7,.3,1) both; }
+.anim-marquee { animation: marqueeX 26s linear infinite; }
+.anim-bob { animation: dropBob 2.6s ease-in-out infinite; }
+.flow-dash { stroke-dasharray: 7 7; animation: dashFlow 1s linear infinite; }
+
+/* film-strip sprocket holes */
+.filmstrip {
+  background-image: radial-gradient(circle, rgba(255,255,255,.85) 2.2px, transparent 2.6px);
+  background-size: 18px 100%;
+  background-position: center;
+  background-repeat: repeat-x;
+}
+
+details.faq > summary { list-style: none; cursor: pointer; }
+details.faq > summary::-webkit-details-marker { display: none; }
+details.faq[open ] .faq-chevron { transform: rotate(180deg); }
+.faq-chevron { transition: transform .25s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

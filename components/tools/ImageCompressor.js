@@ -1,0 +1,290 @@
+"use client";
+
+import { useCallback, useMemo, useRef, useState } from "react";
+import Dropzone from "@/components/Dropzone";
+import { Icon } from "@/components/icons";
+import { formatBytes, savedPct, downloadBlob, stripExt, loadImage, renderToBlob, fitWithin, uid } from "@/lib/utils";
+
+const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+
+const MODE_COPY = {
+  all: { drop: "Drop images to compress", hint: "JPG, PNG or WebP — add up to 50 at once" },
+  jpg: { drop: "Drop JPG photos to compress", hint: "JPEG files (other images are converted to JPG)" },
+  png: { drop: "Drop PNG images to compress", hint: "PNG files — transparency is always preserved" },
+};
+
+export default function ImageCompressor({ mode = "all" }) {
+  const [items, setItems] = useState([]);
+  const [quality, setQuality] = useState(80);
+  const [maxDim, setMaxDim] = useState(0);
+  const [format, setFormat] = useState(mode === "jpg" ? "image/jpeg" : mode === "png" ? "image/png" : "auto");
+  const [busy, setBusy] = useState(false);
+  const [zipping, setZipping] = useState(false);
+  const itemsRef = useRef([]);
+  itemsRef.current = items;
+
+  const addFiles = useCallback(async (files) => {
+    const images = files.filter((f) => f.type.startsWith("image/") || /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(f.name));
+    const fresh = await Promise.all(
+      images.slice(0, 50).map(async (file) => {
+        try {
+          const { img, url, width, height } = await loadImage(file);
+          return { id: uid(), file, img, url, width, height, status: "ready", result: null, resultUrl: null, outName: "", note: "" };
+        } catch {
+          return { id: uid(), file, img: null, url: null, width: 0, height: 0, status: "error", result: null, resultUrl: null, outName: "", note: "Could not read this file" };
+        }
+      })
+    );
+    setItems((prev) => [...prev, ...fresh]);
+  }, []);
+
+  const resolveType = useCallback(
+    (item) => {
+      if (format !== "auto") return format;
+      return EXT[item.file.type] ? item.file.type : "image/png";
+    },
+    [format]
+  );
+
+  const compressOne = useCallback(
+    async (item) => {
+      const type = resolveType(item);
+      const { width, height } = fitWithin(item.width, item.height, maxDim);
+      const blob = await renderToBlob(item.img, {
+        width,
+        height,
+        type,
+        quality: quality / 100,
+        background: type === "image/jpeg" ? "#ffffff" : null,
+      });
+      // Never hand back a bigger file when format & size are unchanged.
+      const unchanged = type === item.file.type && width === item.width && height === item.height;
+      if (unchanged && blob.size >= item.file.size) {
+        return { result: item.file, outName: item.file.name, note: "Already well optimized — original kept" };
+      }
+      return { result: blob, outName: `${stripExt(item.file.name)}-compressed.${EXT[type]}`, note: "" };
+    },
+    [maxDim, quality, resolveType]
+  );
+
+  const compressAll = async () => {
+    setBusy(true);
+    for (const item of itemsRef.current) {
+      if (!item.img || item.status === "error") continue;
+      setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: "working" } : it)));
+      try {
+        const { result, outName, note } = await compressOne(item);
+        setItems((prev) =>
+          prev.map((it) =>
+            it.id === item.id
+              ? { ...it, status: "done", result, outName, note, resultUrl: result === item.file ? it.url : URL.createObjectURL(result) }
+              : it
+          )
+        );
+      } catch (e) {
+        setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: "error", note: e.message } : it)));
+      }
+    }
+    setBusy(false);
+  };
+
+  const downloadAll = async () => {
+    const done = items.filter((i) => i.status === "done" && i.result);
+    if (done.length === 1) return downloadBlob(done[0].result, done[0].outName);
+    setZipping(true);
+    try {
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      const used = new Set();
+      done.forEach((i) => {
+        let name = i.outName;
+        let n = 2;
+        while (used.has(name)) name = `${stripExt(i.outName)}-${n++}.${i.outName.split(".").pop()}`;
+        used.add(name);
+        zip.file(name, i.result);
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(blob, "toolsstars-compressed-images.zip");
+    } finally {
+      setZipping(false);
+    }
+  };
+
+  const remove = (id) =>
+    setItems((prev) => {
+      const it = prev.find((i) => i.id === id);
+      if (it?.resultUrl && it.resultUrl !== it.url) URL.revokeObjectURL(it.resultUrl);
+      if (it?.url) URL.revokeObjectURL(it.url);
+      return prev.filter((i) => i.id !== id);
+    });
+
+  const clearAll = () => {
+    items.forEach((i) => { if (i.url) URL.revokeObjectURL(i.url); });
+    setItems([]);
+  };
+
+  const totals = useMemo(() => {
+    const done = items.filter((i) => i.status === "done" && i.result);
+    const before = done.reduce((s, i) => s + i.file.size, 0);
+    const after = done.reduce((s, i) => s + i.result.size, 0);
+    return { count: done.length, before, after, pct: savedPct(before, after) };
+  }, [items]);
+
+  const qualityLabel = quality >= 90 ? "Best quality" : quality >= 70 ? "Balanced ★ recommended" : quality >= 45 ? "Small file" : "Smallest file";
+  const showQuality = format !== "image/png";
+
+  return (
+    <div>
+      <Dropzone
+        accept="image/*"
+        multiple
+        allowPaste
+        compact={items.length > 0}
+        onFiles={addFiles}
+        title={items.length ? "Add more images" : MODE_COPY[mode].drop}
+        hint={MODE_COPY[mode].hint}
+        icon="image"
+      />
+
+      {items.length > 0 && (
+        <>
+          {/* settings */}
+          <div className="mt-6 grid gap-5 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 md:grid-cols-3">
+            <div>
+              <label htmlFor="q" className="flex items-center justify-between text-sm font-semibold text-white">
+                Quality <span className="rounded-md bg-amber-400/15 px-2 py-0.5 text-xs font-bold text-amber-300">{quality}%</span>
+              </label>
+              <input
+                id="q" type="range" min="5" max="100" value={quality}
+                onChange={(e) => setQuality(+e.target.value)} disabled={!showQuality}
+                className="mt-3 w-full disabled:opacity-40"
+              />
+              <p className="mt-1.5 text-xs text-slate-500">
+                {showQuality ? qualityLabel : "PNG is lossless — quality does not apply. Switch output to WebP for much smaller files."}
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="maxdim" className="text-sm font-semibold text-white">Max dimension (resize)</label>
+              <select
+                id="maxdim" value={maxDim} onChange={(e) => setMaxDim(+e.target.value)}
+                className="mt-2.5 w-full rounded-xl border border-white/10 bg-[#12152e] px-3 py-2.5 text-sm text-white outline-none focus:border-amber-400/60"
+              >
+                <option value={0}>Keep original size</option>
+                <option value={2560}>Max 2560 px (QHD)</option>
+                <option value={1920}>Max 1920 px (Full HD)</option>
+                <option value={1600}>Max 1600 px</option>
+                <option value={1280}>Max 1280 px (web)</option>
+                <option value={1024}>Max 1024 px</option>
+                <option value={800}>Max 800 px (email / WhatsApp)</option>
+              </select>
+              <p className="mt-1.5 text-xs text-slate-500">Resizing is the fastest way to slash file size.</p>
+            </div>
+
+            <div>
+              <label htmlFor="fmt" className="text-sm font-semibold text-white">Output format</label>
+              <select
+                id="fmt" value={format} onChange={(e) => setFormat(e.target.value)}
+                className="mt-2.5 w-full rounded-xl border border-white/10 bg-[#12152e] px-3 py-2.5 text-sm text-white outline-none focus:border-amber-400/60"
+              >
+                {mode === "all" && <option value="auto">Same as original</option>}
+                <option value="image/jpeg">JPG — best for photos</option>
+                <option value="image/webp">WebP — smallest, keeps transparency</option>
+                <option value="image/png">PNG — lossless, keeps transparency</option>
+              </select>
+              <p className="mt-1.5 text-xs text-slate-500">
+                {mode === "png" ? "Tip: WebP keeps transparency and is often 70–90% smaller than PNG." : "JPG flattens transparency onto white."}
+              </p>
+            </div>
+          </div>
+
+          {/* actions */}
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              onClick={compressAll} disabled={busy}
+              className="inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Icon name="compress" size={19} strokeWidth={2.1} />
+              {busy ? "Compressing…" : `Compress ${items.filter((i) => i.status !== "error").length} image(s)`}
+            </button>
+            {totals.count > 0 && (
+              <button
+                onClick={downloadAll} disabled={zipping}
+                className="inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-extrabold text-[#032114] shadow-xl shadow-emerald-500/20 transition hover:bg-emerald-300 disabled:opacity-60"
+              >
+                <Icon name="download" size={19} strokeWidth={2.1} />
+                {zipping ? "Zipping…" : totals.count > 1 ? `Download all (${totals.count}) as ZIP` : "Download image"}
+              </button>
+            )}
+            <button onClick={clearAll} className="inline-flex items-center gap-1.5 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-slate-300 hover:border-rose-400/40 hover:text-rose-300">
+              <Icon name="trash" size={16} /> Clear all
+            </button>
+          </div>
+
+          {/* totals */}
+          {totals.count > 0 && (
+            <div className="mt-5 rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.06] p-4" role="status">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="font-semibold text-white">
+                  Total: <span className="text-rose-300 line-through decoration-rose-400/60">{formatBytes(totals.before)}</span>
+                  {" → "}<span className="text-emerald-300 font-extrabold">{formatBytes(totals.after)}</span>
+                </span>
+                <span className="rounded-full bg-emerald-400 px-3 py-1 text-xs font-extrabold text-[#032114]">You saved {totals.pct}%</span>
+              </div>
+              <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white/[0.08]">
+                <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 transition-all duration-700" style={{ width: `${Math.max(2, 100 - totals.pct)}%` }} />
+              </div>
+            </div>
+          )}
+
+          {/* list */}
+          <ul className="mt-6 space-y-3">
+            {items.map((item) => (
+              <li key={item.id} className="flex flex-wrap items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-3.5">
+                {item.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={item.url} alt={item.file.name} className="h-16 w-16 shrink-0 rounded-xl object-cover checker" />
+                ) : (
+                  <span className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-white/[0.05] text-rose-300"><Icon name="x" /></span>
+                )}
+                <div className="min-w-[180px] flex-1">
+                  <p className="truncate text-sm font-semibold text-white" title={item.file.name}>{item.file.name}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {item.width ? `${item.width} × ${item.height} · ` : ""}{formatBytes(item.file.size)}
+                    {item.note && <span className="text-amber-300"> · {item.note}</span>}
+                  </p>
+                  {item.status === "working" && <p className="mt-1 text-xs font-semibold text-amber-300">Compressing…</p>}
+                  {item.status === "error" && <p className="mt-1 text-xs font-semibold text-rose-300">{item.note || "Something went wrong"}</p>}
+                </div>
+
+                {item.status === "done" && item.result && (
+                  <>
+                    {item.resultUrl && item.result !== item.file && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.resultUrl} alt="Compressed preview" className="h-16 w-16 shrink-0 rounded-xl object-cover ring-2 ring-emerald-400/50 checker" />
+                    )}
+                    <div className="text-right">
+                      <p className="text-sm font-extrabold text-emerald-300">{formatBytes(item.result.size)}</p>
+                      <span className="mt-0.5 inline-block rounded-full bg-emerald-400/15 border border-emerald-400/30 px-2 py-0.5 text-[11px] font-bold text-emerald-300">
+                        −{savedPct(item.file.size, item.result.size)}%
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => downloadBlob(item.result, item.outName)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.06] border border-white/10 px-3.5 py-2 text-sm font-semibold text-white hover:border-emerald-400/50 hover:text-emerald-300"
+                    >
+                      <Icon name="download" size={15} /> Download
+                    </button>
+                  </>
+                )}
+                <button onClick={() => remove(item.id)} aria-label={`Remove ${item.file.name}`} className="rounded-lg p-2 text-slate-500 hover:bg-rose-400/10 hover:text-rose-300">
+                  <Icon name="trash" size={17} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}

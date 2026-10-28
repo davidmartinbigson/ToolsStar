@@ -1,7 +1,17 @@
 import "./globals.css";
+import Script from "next/script";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION } from "@/lib/site";
+import Analytics from "@/components/Analytics";
+import CookieConsent from "@/components/CookieConsent";
+import {
+  SITE_URL,
+  SITE_NAME,
+  SITE_DESCRIPTION,
+  CDN_ORIGINS,
+  ADS_ENABLED,
+  ADSENSE_CLIENT,
+} from "@/lib/site";
 
 export const metadata = {
   metadataBase: new URL(SITE_URL),
@@ -104,15 +114,41 @@ const websiteJsonLd = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
+      <head>
+        {/* The tools pull open-source libraries (pdf-lib, pdf.js, AI models…)
+            from these CDNs at runtime. Warming the connections up front saves
+            a DNS lookup + TLS handshake on the critical path of every tool. */}
+        {CDN_ORIGINS.map((o) => (
+          <link key={`preconnect-${o}`} rel="preconnect" href={o} crossOrigin="anonymous" />
+        ))}
+        {CDN_ORIGINS.map((o) => (
+          <link key={`dns-prefetch-${o}`} rel="dns-prefetch" href={o} />
+        ))}
+        {ADS_ENABLED && (
+          <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossOrigin="anonymous" />
+        )}
+      </head>
       <body className="min-h-screen flex flex-col">
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
         />
+        {/* Loaded only once an AdSense client id is configured; individual
+            AdSlot components stay inert until the visitor consents. */}
+        {ADS_ENABLED && (
+          <Script
+            async
+            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
+            crossOrigin="anonymous"
+            strategy="afterInteractive"
+          />
+        )}
         <Starfield />
         <Header />
         <main className="relative z-10 flex-1 w-full">{children}</main>
         <Footer />
+        <Analytics />
+        <CookieConsent />
       </body>
     </html>
   );

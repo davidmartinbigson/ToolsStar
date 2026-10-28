@@ -84,20 +84,27 @@ npm run start      # production server
 
 1. Push this folder to a GitHub repo.
 2. Go to **vercel.com → New Project → Import** your repo. Framework auto-detects as Next.js. Click Deploy (no settings needed).
-3. Add your custom domain in **Settings → Domains** (e.g. `toolsstars.com`).
+3. Add your custom domain in **Settings → Domains** (e.g. `toolsstars.com`). Set the **apex as Primary** and make `www` a **308 Redirect to Primary** — every canonical/sitemap/OG URL in this repo is non-www, so the two must agree. DNS: `A @ → 76.76.21.21`, `CNAME www → cname.vercel-dns.com`, and delete any parking records at the registrar first.
 4. In **Settings → Environment Variables** add:
-   `NEXT_PUBLIC_SITE_URL=https://yourdomain.com`  ← this updates the sitemap, canonicals & OG tags automatically. Redeploy once.
+   `NEXT_PUBLIC_SITE_URL=https://yourdomain.com`  ← this updates the sitemap, canonicals & OG tags automatically. Redeploy once **with "Use existing Build Cache" unticked** (`NEXT_PUBLIC_*` values are inlined at build time, so a cached build keeps the old one).
 
 Alternatives that also work free: **Cloudflare Pages** and **Netlify** (both auto-detect Next.js the same way). Any VPS: `npm run build && npm run start` behind nginx. **No database, no file storage, no backend needed — that's the whole point.**
 
 ## 5. After deploy: get indexed & grow traffic
 
-1. **Google Search Console** → add your domain → submit `https://yourdomain.com/sitemap.xml`.
+1. **Google Search Console** → add your domain (use the **Domain** property so www + non-www + both protocols are covered) → submit `https://yourdomain.com/sitemap.xml`.
 2. **Bing Webmaster Tools** → import from Search Console (Bing/DuckDuckGo traffic is free extra).
-3. **Analytics:** add Google Analytics 4 or Plausible by pasting their script in `app/layout.js`.
-4. **AdSense:** once approved, paste the AdSense script in `app/layout.js` and ad units in `components/ToolShell.js` (below the tool is the best-converting spot) — keep ads off the tool workspace itself so users stay happy.
-5. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates: Protect/Unlock PDF, PDF to Word-style layouts, dedicated WebP to PNG and JPG to WebP pages, more everyday calculators (salary/income tax, EMI/loan, BMI, electricity bill), date-of-joining to service-length calculators, and country-specific passport-photo pages.
-6. Share each tool page (not just the homepage) on Reddit/Pinterest/WhatsApp groups — tool pages convert, homepages bounce.
+3. **Analytics — no code needed.** Set `NEXT_PUBLIC_GA_ID=G-XXXXXXXXXX` and redeploy. `components/Analytics.js` then loads GA4 with `anonymize_ip`, **but only after the visitor accepts optional cookies**. Leave it unset and no analytics request is ever made.
+4. **AdSense — no code needed.** After approval set:
+   - `NEXT_PUBLIC_ADSENSE_CLIENT=ca-pub-XXXXXXXXXXXXXXXX` → loads the AdSense library in `app/layout.js`
+   - `NEXT_PUBLIC_ADSENSE_SLOT=NNNNNNNNNN` → activates the responsive unit that `components/ToolShell.js` already renders below each tool (the best-converting spot, and deliberately outside the tool workspace)
+   - `NEXT_PUBLIC_ADSENSE_PUBLISHER_ID=pub-XXXXXXXXXXXXXXXX` → `/ads.txt` starts publishing `google.com, pub-XXXX, DIRECT, f08c47fec0942fa0`
+
+   Until those are set, **no ad markup, no ad script and no cookie banner is emitted at all** — so there is zero cumulative layout shift and nothing to consent to. The banner (`components/CookieConsent.js`) appears automatically the moment ads or analytics are switched on, and a visitor who picks "Essential only" gets no ad unit and no GA hit while every tool keeps working.
+5. **Approval readiness.** The pages AdSense reviewers look for already exist and are linked from the footer on every page: `/privacy-policy`, `/terms`, `/disclaimer`, `/about`, `/contact`. All five are in the sitemap.
+6. **Structured data** is emitted automatically: `WebSite`+`SearchAction` (layout), `SoftwareApplication` + `HowTo` + `FAQPage` + `BreadcrumbList` (every tool page), `CollectionPage` + `BreadcrumbList` + `ItemList` covering all 51 tools (`/tools`), and `WebPage`/`Organization` on the informational pages. Validate with Google's Rich Results Test.
+7. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates: Protect/Unlock PDF, PDF to Word-style layouts, dedicated WebP to PNG and JPG to WebP pages, more everyday calculators (salary/income tax, EMI/loan, BMI, electricity bill), date-of-joining to service-length calculators, and category hub pages (`/tools/image`, `/tools/pdf`, …).
+8. Share each tool page (not just the homepage) on Reddit/Pinterest/WhatsApp groups — tool pages convert, homepages bounce.
 
 ## 6. Add a new tool (5 minutes)
 
@@ -112,16 +119,26 @@ Alternatives that also work free: **Cloudflare Pages** and **Netlify** (both aut
 app/                  Pages + routing (App Router)
   page.js             Homepage (hero, animated diagrams, FAQ…)
   tools/              /tools index + one folder per tool page
-  layout.js           Global SEO metadata, header/footer, starfield
+  about/ contact/ privacy-policy/ terms/ disclaimer/
+                      Informational & legal pages (AdSense approval requires them)
+  ads.txt/route.js    Generates ads.txt from NEXT_PUBLIC_ADSENSE_PUBLISHER_ID
+  layout.js           Global SEO metadata, CDN preconnect hints, header/footer,
+                      starfield, conditional AdSense loader, Analytics + consent
   sitemap.js robots.js opengraph-image.js
 components/
   diagrams.js         The animated homepage diagrams (pure CSS/SVG, 0 JS)
-  ToolShell.js        SEO layout shared by every tool page
+  ToolShell.js        SEO layout shared by every tool page (4 JSON-LD blocks + ad slot)
+  LegalShell.js       Shared layout for the legal/informational pages
   Dropzone.js         Drag-drop / paste upload box
+  CookieConsent.js    Consent banner — inert until ads or analytics are configured
+  Analytics.js        GA4 loader, gated on consent
+  AdSlot.js           Responsive AdSense unit, gated on config + consent
+  ContactForm.js      Composes a mailto: (no backend, nothing is POSTed)
   tools/              Tool engines grouped by pack (pdfTools, pdfEssentials, growthTools, miscPack2, videoPack, audioPack, quickTools, imageDevPack, calcPack + standalone SignPdf…); heavy libraries load lazily per page
 lib/
   tools.js            Tool catalog (single source of truth)
-  site.js             Domain & site constants  ← change your domain here / via env
+  site.js             Domain, contact, CDN & monetisation constants  ← env-driven
+  consent.js          Consent read/write/subscribe helpers (client)
   utils.js            Shared helpers (sizes, canvas export, downloads)
 ```
 

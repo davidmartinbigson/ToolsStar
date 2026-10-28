@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Icon } from "./icons";
 import ToolCard from "./ToolCard";
+import AdSlot from "./AdSlot";
 import { relatedTools } from "@/lib/tools";
 import { SITE_URL } from "@/lib/site";
 
@@ -40,6 +41,17 @@ export default function ToolShell({ tool, intro, steps, features, faqs, children
         name: f.q,
         acceptedAnswer: { "@type": "Answer", text: f.a },
       })),
+    },
+    // Mirrors the visible breadcrumb below — required for the Breadcrumbs
+    // rich result, which shows the path in search listings.
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Home", item: `${SITE_URL}/` },
+        { "@type": "ListItem", position: 2, name: "All Tools", item: `${SITE_URL}/tools` },
+        { "@type": "ListItem", position: 3, name: tool.name, item: url },
+      ],
     },
   ];
 
@@ -89,6 +101,9 @@ export default function ToolShell({ tool, intro, steps, features, faqs, children
       <section aria-label={tool.name} className="mt-8 rounded-3xl border border-white/[0.09] bg-[#0a0d20]/80 p-4 sm:p-7 shadow-2xl">
         {children}
       </section>
+
+      {/* Renders nothing until AdSense is configured and consented to. */}
+      <AdSlot className="mt-8" label="Advertisement" />
 
       {/* how to */}
       <section className="mt-14" aria-labelledby="howto-h">

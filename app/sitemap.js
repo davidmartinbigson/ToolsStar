@@ -1,6 +1,16 @@
 import { SITE_URL } from "@/lib/site";
 import { TOOLS } from "@/lib/tools";
 
+// Informational / legal pages. Kept here (rather than hardcoded per page) so
+// the sitemap can never drift out of sync when a new one is added.
+export const SITE_PAGES = [
+  { path: "/about", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/contact", changeFrequency: "yearly", priority: 0.5 },
+  { path: "/privacy-policy", changeFrequency: "yearly", priority: 0.4 },
+  { path: "/terms", changeFrequency: "yearly", priority: 0.4 },
+  { path: "/disclaimer", changeFrequency: "yearly", priority: 0.3 },
+];
+
 export default function sitemap() {
   const now = new Date();
   return [
@@ -11,6 +21,12 @@ export default function sitemap() {
       lastModified: now,
       changeFrequency: "monthly",
       priority: 0.85,
+    })),
+    ...SITE_PAGES.map((p) => ({
+      url: `${SITE_URL}${p.path}`,
+      lastModified: now,
+      changeFrequency: p.changeFrequency,
+      priority: p.priority,
     })),
   ];
 }

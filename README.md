@@ -12,7 +12,7 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | **Plain React (SPA)** | Google struggles to index client-only pages; poor SEO = no organic traffic. |
 | **Next.js (chosen ✅)** | Every page is pre-rendered as static HTML → perfect Google indexing, ~110 KB JS, loads in milliseconds, deploys free on Vercel/Cloudflare. Tools still run 100% client-side. Best of both worlds. |
 
-## 2. Tools included (28 — all fully working, no placeholders)
+## 2. Tools included (44 — all fully working, no placeholders)
 
 | Tool | URL | How it works |
 |---|---|---|
@@ -21,7 +21,7 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | AI Image Enhancer | `/tools/image-enhancer` | UpscalerJS ESRGAN-Slim 2x/4x via CDN + sharpen/denoise finish (Fast Enhance fallback) |
 | Image Compressor | `/tools/image-compressor` | Canvas re-encode, bulk up to 50, ZIP download |
 | JPG Compressor | `/tools/jpg-compressor` | Same engine, tuned + unique SEO page for "compress jpg" searches |
-| PNG Compressor | `/tools/png-compressor` | Lossless PNG or transparency-preserving WebP |
+| PNG Compressor | `/tools/png-compressor` | Smart PNG palette compression (UPNG.js lazy-loaded) or pixel-identical Lossless PNG, transparency preserved |
 | Image Resizer | `/tools/image-resizer` | Exact px / % / social-media presets |
 | Image Converter | `/tools/image-converter` | PNG ⇄ JPG ⇄ WebP in bulk |
 | Image to PDF | `/tools/image-to-pdf` | jsPDF: A4/Letter/fit, reorder pages |
@@ -43,6 +43,22 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | Image to Text (OCR) | `/tools/image-to-text` | Tesseract.js (CDN), 8 languages incl. Urdu |
 | QR Scanner | `/tools/qr-scanner` | jsQR (CDN) camera + image scanning, link preview |
 | Document Scanner | `/tools/document-scanner` | OpenCV.js (CDN) auto page-corner detection + manual drag corners, homography flattening, adaptive photocopy cleanup, Auto/A4/Letter/A5/Legal/ID sizes, multi-page PDF/ZIP |
+| Rotate PDF | `/tools/rotate-pdf` | pdf-lib page-rotation metadata for all or selected pages; text and quality preserved |
+| Add Page Numbers to PDF | `/tools/add-page-numbers-to-pdf` | pdf-lib text stamping, 5 styles, 6 positions, custom start number, skip cover page |
+| Watermark PDF | `/tools/watermark-pdf` | pdf-lib text watermark: diagonal, tiled or footer, opacity/size/colour, all pages or first only |
+| PDF to Text | `/tools/pdf-to-text` | PDF.js selectable-text extraction with line reconstruction, editable output, TXT download |
+| CNIC Front & Back PDF Maker | `/tools/cnic-pdf-maker` | Canvas rotate/clarity/fit per side, jsPDF A4 layout at actual 85.6×54mm card size or 125% |
+| Signature Resizer | `/tools/signature-resizer` | Pixel-level white-paper removal with ink recolour, auto-crop, transparent PNG / white JPG, exact form sizes without stretching |
+| Compress PDF to Exact KB | `/tools/compress-pdf-to-kb` | Renders each page once, pre-encodes 9 DPI/quality levels, assembles the best-quality PDF that fits the target bytes (≤30 pages) |
+| Solar Load Calculator | `/tools/solar-load-calculator` | Appliance watts × qty × hours → running load, daily units, panel count, inverter kW, battery kWh/Ah |
+| MP3 Cutter | `/tools/mp3-cutter` | WebAudio waveform editor, fades + normalize, lamejs MP3 export |
+| Audio Compressor | `/tools/audio-compressor` | OfflineAudioContext resample/downmix + lamejs MP3 at speech/balanced/quality presets |
+| Voice Recorder | `/tools/voice-recorder` | getUserMedia + MediaRecorder with pause/resume, live level meter, optional MP3 conversion |
+| Ringtone Maker | `/tools/ringtone-maker` | MP3-cutter engine tuned for ringtones: 15/30/40s presets, loop preview, fades on by default |
+| SVG to PNG / JPG | `/tools/svg-to-png` | Sanitized SVG (scripts stripped) rasterized at 1x–4x or exact width; PNG/JPG/WebP |
+| Favicon Generator | `/tools/favicon-generator` | 512px canvas master from image or text → hand-built multi-size ICO + PNGs + manifest + HTML in a ZIP |
+| Add Watermark to Image | `/tools/add-watermark-to-image` | Canvas text/logo watermark, 9 positions or tiled, bulk export as ZIP |
+| EXIF Viewer & Metadata Remover | `/tools/exif-viewer` | exifr (CDN) reads EXIF/GPS/XMP; clean copy is redrawn pixel-only and re-verified |
 
 **Homepage highlights:** animated SVG/CSS diagrams that visually explain video compression, AI background removal, image compression and the "no upload" privacy model · live tool search + category filters · comparison table · FAQ with schema.
 
@@ -73,7 +89,7 @@ Alternatives that also work free: **Cloudflare Pages** and **Netlify** (both aut
 2. **Bing Webmaster Tools** → import from Search Console (Bing/DuckDuckGo traffic is free extra).
 3. **Analytics:** add Google Analytics 4 or Plausible by pasting their script in `app/layout.js`.
 4. **AdSense:** once approved, paste the AdSense script in `app/layout.js` and ad units in `components/ToolShell.js` (below the tool is the best-converting spot) — keep ads off the tool workspace itself so users stay happy.
-5. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates with huge search volume: PDF Compressor, PDF to JPG, Merge PDF, GIF Compressor, Video to GIF, Audio Compressor (MP3), HEIC to JPG, SVG Converter, Favicon Generator, Age/EMI calculators.
+5. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates: Sign PDF, dedicated PDF to PNG / WebP to JPG landing pages, Age / Percentage / GPA / Zakat calculators, and country-specific passport-photo pages.
 6. Share each tool page (not just the homepage) on Reddit/Pinterest/WhatsApp groups — tool pages convert, homepages bounce.
 
 ## 6. Add a new tool (5 minutes)
@@ -95,7 +111,7 @@ components/
   diagrams.js         The animated homepage diagrams (pure CSS/SVG, 0 JS)
   ToolShell.js        SEO layout shared by every tool page
   Dropzone.js         Drag-drop / paste upload box
-  tools/              The 8 tool engines (ImageCompressor powers 3 pages)
+  tools/              Tool engines grouped by pack (pdfTools, pdfEssentials, growthTools, pakistanPack2, videoPack, audioPack, quickTools, imageDevPack…); heavy libraries load lazily per page
 lib/
   tools.js            Tool catalog (single source of truth)
   site.js             Domain & site constants  ← change your domain here / via env
@@ -107,6 +123,9 @@ lib/
 - **Video Compressor** re-encodes in near-real-time in the browser (a 3-minute video takes ~3 minutes; output is MP4 where supported, otherwise WebM). This is the trade-off for zero server costs and total privacy — and it still beats uploading a 500 MB file on slow connections. Keep the tab visible while it runs.
 - **Background Remover** downloads its AI model once on first use (cached afterwards; the "small" model is the fast default). Works best in up-to-date Chrome/Edge/Firefox; very low-memory phones may struggle with huge photos.
 - **Image Enhancer** downloads its ESRGAN model from a CDN on first use and infers in 64px patches (with cancel + progress). Large 4x jobs can take minutes on weak phones — the input cap (default 1024px) and the Fast Enhance fallback keep it usable everywhere. AI output is a plausible reconstruction of detail, not a perfect recovery of information that was never in the file.
+- **Compress PDF to Exact KB** rebuilds pages as optimized images (text no longer selectable) and is capped at 30 pages to protect phone memory; if the original already fits the target it is returned unchanged.
+- **PDF to Text** only reads text that is already stored in a digital PDF — scanned/photo PDFs need the OCR path (PDF to JPG → Image to Text).
+- **Voice Recorder** needs microphone permission over HTTPS and saves in the browser's native format (WebM on Chrome, M4A on Safari); the built-in converter makes an MP3 copy on request.
 - Huge files are limited only by the visitor's device memory — there are no server-imposed caps because there is no server processing at all.
 
 ## 9. Costs when traffic grows

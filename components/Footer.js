@@ -62,9 +62,17 @@ export default function Footer() {
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200">Tools Stars</h3>
             <ul className="mt-4 space-y-2.5 text-sm text-slate-400">
               <li><Link href="/tools" className="hover:text-amber-300 transition">All Tools</Link></li>
+              <li><Link href="/about" className="hover:text-amber-300 transition">About Us</Link></li>
+              <li><Link href="/contact" className="hover:text-amber-300 transition">Contact</Link></li>
               <li><Link href="/#how-it-works" className="hover:text-amber-300 transition">How It Works</Link></li>
-              <li><Link href="/#how-compression-works" className="hover:text-amber-300 transition">How Compression Works</Link></li>
               <li><Link href="/#faq" className="hover:text-amber-300 transition">FAQ</Link></li>
+            </ul>
+            <h3 className="mt-8 text-sm font-bold uppercase tracking-wider text-slate-200">Legal</h3>
+            <ul className="mt-4 space-y-2.5 text-sm text-slate-400">
+              <li><Link href="/privacy-policy" className="hover:text-amber-300 transition">Privacy Policy</Link></li>
+              <li><Link href="/terms" className="hover:text-amber-300 transition">Terms of Service</Link></li>
+              <li><Link href="/disclaimer" className="hover:text-amber-300 transition">Disclaimer</Link></li>
+              <li><Link href="/contact" className="hover:text-amber-300 transition">Report a Problem</Link></li>
             </ul>
             <p className="mt-6 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3 text-xs leading-relaxed text-slate-400">
               <strong className="text-slate-200">Tip:</strong> bookmark this page — new
@@ -73,8 +81,15 @@ export default function Footer() {
           </nav>
         </div>
 
-        <div className="mt-12 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-white/[0.07] pt-6 text-xs text-slate-500">
+        <div className="mt-12 flex flex-col gap-4 border-t border-white/[0.07] pt-6 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
           <p>© {year} Tools Stars. Free forever — no sign-up, no watermarks, no uploads.</p>
+          <nav aria-label="Legal" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5">
+            <Link href="/privacy-policy" className="transition hover:text-amber-300">Privacy</Link>
+            <Link href="/terms" className="transition hover:text-amber-300">Terms</Link>
+            <Link href="/disclaimer" className="transition hover:text-amber-300">Disclaimer</Link>
+            <Link href="/about" className="transition hover:text-amber-300">About</Link>
+            <Link href="/contact" className="transition hover:text-amber-300">Contact</Link>
+          </nav>
           <p className="inline-flex items-center gap-1.5">
             Made with <Icon name="star" size={12} filled className="text-amber-400" /> for creators everywhere
           </p>

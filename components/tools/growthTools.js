@@ -145,9 +145,9 @@ export function TargetKbCompressor() {
 
 /* ═══════════════ PASSPORT SIZE PHOTO MAKER ═══════════════ */
 const SIZES = [
-  { id: "eu", label: "35 × 45 mm — PK / UK / EU / Schengen", w: 35, h: 45 },
-  { id: "us", label: "2 × 2 inch (51 × 51 mm) — US / PK Passport", w: 51, h: 51 },
-  { id: "pk15", label: "1.5 × 2 inch — Jobs / Forms", w: 38.1, h: 50.8 },
+  { id: "eu", label: "35 × 45 mm — UK / EU / Schengen / Visa", w: 35, h: 45 },
+  { id: "us", label: "2 × 2 inch (51 × 51 mm) — US / Canada Passport", w: 51, h: 51 },
+  { id: "form15", label: "1.5 × 2 inch — Jobs / Forms", w: 38.1, h: 50.8 },
   { id: "cn", label: "33 × 48 mm — China Visa", w: 33, h: 48 },
   { id: "sq", label: "1 × 1 inch — small square", w: 25.4, h: 25.4 },
 ];

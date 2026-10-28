@@ -3,21 +3,116 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, savedPct, downloadBlob, stripExt, loadImage, renderToBlob, fitWithin, uid } from "@/lib/utils";
+import { formatBytes, savedPct, downloadBlob, stripExt, loadImage, loadScript, renderToBlob, fitWithin, uid } from "@/lib/utils";
 
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+const PAKO_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js";
+const UPNG_SRC = "https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js";
 
 const MODE_COPY = {
   all: { drop: "Drop images to compress", hint: "JPG, PNG or WebP — add up to 50 at once" },
   jpg: { drop: "Drop JPG photos to compress", hint: "JPEG files (other images are converted to JPG)" },
-  png: { drop: "Drop PNG images to compress", hint: "PNG files — transparency is always preserved" },
+  png: { drop: "Drop PNG images to compress", hint: "Smart PNG compression — transparency is always preserved" },
 };
+
+let pngEnginePromise = null;
+function loadPngEngine() {
+  if (typeof window !== "undefined" && window.UPNG?.encode && window.pako?.deflate) {
+    return Promise.resolve(window.UPNG);
+  }
+  if (pngEnginePromise) return pngEnginePromise;
+  pngEnginePromise = (async () => {
+    await loadScript(PAKO_SRC);
+    await loadScript(UPNG_SRC);
+    if (!window.UPNG?.encode || !window.pako?.deflate) {
+      throw new Error("PNG compression engine did not start.");
+    }
+    return window.UPNG;
+  })().catch((e) => {
+    pngEnginePromise = null;
+    throw e;
+  });
+  return pngEnginePromise;
+}
+
+function pngColorsForQuality(quality) {
+  if (quality >= 96) return 256;
+  return Math.max(16, Math.min(256, Math.round((quality / 100) * 256)));
+}
+
+function drawImageCanvas(img, width, height) {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width));
+  canvas.height = Math.max(1, Math.round(height));
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return { canvas, ctx };
+}
+
+function canvasPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("PNG export failed in this browser."))),
+      "image/png"
+    );
+  });
+}
+
+const letUiPaint = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+async function encodePngBlob(item, width, height, { strategy, quality }) {
+  const { canvas, ctx } = drawImageCanvas(item.img, width, height);
+  try {
+    const UPNG = await loadPngEngine();
+    await letUiPaint();
+    const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer;
+    const candidates = [];
+    const encodeWith = (colors, note) => {
+      // UPNG may retain/use the supplied buffer during encoding, so each
+      // candidate gets its own copy.
+      const encoded = UPNG.encode([rgba.slice(0)], canvas.width, canvas.height, colors);
+      return { blob: new Blob([encoded], { type: "image/png" }), note };
+    };
+
+    if (strategy === "lossless") {
+      candidates.push(encodeWith(0, "Lossless PNG optimized"));
+      // Chrome/Firefox/Safari each have their own PNG encoder; sometimes one
+      // produces a slightly smaller lossless file than UPNG, so keep the best.
+      candidates.push({ blob: await canvasPngBlob(canvas), note: "Lossless PNG optimized" });
+    } else {
+      const colors = pngColorsForQuality(quality);
+      const smart = encodeWith(colors, `Smart PNG · ${colors} colours`);
+      candidates.push(smart);
+
+      // If palette compression did not help much (or this is a conversion to
+      // PNG, where comparing with the source size is not meaningful), also
+      // try a fully lossless UPNG candidate and keep whichever is smaller.
+      const pixels = canvas.width * canvas.height;
+      const shouldTryLossless = item.file.type === "image/png"
+        ? smart.blob.size >= item.file.size * 0.9
+        : pixels <= 4_000_000;
+      if (shouldTryLossless) {
+        await letUiPaint();
+        candidates.push(encodeWith(0, "Lossless PNG optimized"));
+      }
+    }
+
+    candidates.sort((a, b) => a.blob.size - b.blob.size);
+    return candidates[0];
+  } catch (e) {
+    console.warn("UPNG PNG compression unavailable; using browser PNG encoder.", e);
+    return { blob: await canvasPngBlob(canvas), note: "PNG optimized" };
+  }
+}
 
 export default function ImageCompressor({ mode = "all" }) {
   const [items, setItems] = useState([]);
   const [quality, setQuality] = useState(80);
   const [maxDim, setMaxDim] = useState(0);
   const [format, setFormat] = useState(mode === "jpg" ? "image/jpeg" : mode === "png" ? "image/png" : "auto");
+  const [pngStrategy, setPngStrategy] = useState("smart");
   const [busy, setBusy] = useState(false);
   const [zipping, setZipping] = useState(false);
   const itemsRef = useRef([]);
@@ -50,21 +145,37 @@ export default function ImageCompressor({ mode = "all" }) {
     async (item) => {
       const type = resolveType(item);
       const { width, height } = fitWithin(item.width, item.height, maxDim);
-      const blob = await renderToBlob(item.img, {
-        width,
-        height,
-        type,
-        quality: quality / 100,
-        background: type === "image/jpeg" ? "#ffffff" : null,
-      });
+      let blob;
+      let note = "";
+
+      if (type === "image/png") {
+        const png = await encodePngBlob(item, width, height, { strategy: pngStrategy, quality });
+        blob = png.blob;
+        note = png.note;
+      } else {
+        blob = await renderToBlob(item.img, {
+          width,
+          height,
+          type,
+          quality: quality / 100,
+          background: type === "image/jpeg" ? "#ffffff" : null,
+        });
+      }
+
       // Never hand back a bigger file when format & size are unchanged.
       const unchanged = type === item.file.type && width === item.width && height === item.height;
       if (unchanged && blob.size >= item.file.size) {
-        return { result: item.file, outName: item.file.name, note: "Already well optimized — original kept" };
+        return {
+          result: item.file,
+          outName: item.file.name,
+          note: type === "image/png" && pngStrategy === "lossless"
+            ? "Already optimized — a lossless PNG cannot shrink this file further"
+            : "Already well optimized — original kept",
+        };
       }
-      return { result: blob, outName: `${stripExt(item.file.name)}-compressed.${EXT[type]}`, note: "" };
+      return { result: blob, outName: `${stripExt(item.file.name)}-compressed.${EXT[type]}`, note };
     },
-    [maxDim, quality, resolveType]
+    [maxDim, pngStrategy, quality, resolveType]
   );
 
   const compressAll = async () => {
@@ -130,8 +241,20 @@ export default function ImageCompressor({ mode = "all" }) {
     return { count: done.length, before, after, pct: savedPct(before, after) };
   }, [items]);
 
+  const hasPngInput = items.some((i) => i.file.type === "image/png" || /\.png$/i.test(i.file.name));
+  const pngOutputActive = format === "image/png" || (format === "auto" && hasPngInput);
+  const pngColors = pngColorsForQuality(quality);
+  const qualityDisabled = format === "image/png" && pngStrategy === "lossless";
   const qualityLabel = quality >= 90 ? "Best quality" : quality >= 70 ? "Balanced ★ recommended" : quality >= 45 ? "Small file" : "Smallest file";
-  const showQuality = format !== "image/png";
+  const qualityHelp = format === "image/png"
+    ? (pngStrategy === "lossless"
+      ? "Lossless PNG keeps identical pixels, so quality does not apply. Savings can be 0% if the PNG is already optimized."
+      : `Smart PNG will use an optimized palette of about ${pngColors} colours — this is what makes PNG→PNG actually shrink.`)
+    : pngOutputActive
+      ? (pngStrategy === "lossless"
+        ? `PNG files stay lossless; JPG/WebP use ${quality}% quality.`
+        : `PNG files use Smart PNG (about ${pngColors} colours); JPG/WebP use ${quality}% quality.`)
+      : qualityLabel;
 
   return (
     <div>
@@ -156,12 +279,10 @@ export default function ImageCompressor({ mode = "all" }) {
               </label>
               <input
                 id="q" type="range" min="5" max="100" value={quality}
-                onChange={(e) => setQuality(+e.target.value)} disabled={!showQuality}
+                onChange={(e) => setQuality(+e.target.value)} disabled={qualityDisabled}
                 className="mt-3 w-full disabled:opacity-40"
               />
-              <p className="mt-1.5 text-xs text-slate-500">
-                {showQuality ? qualityLabel : "PNG is lossless — quality does not apply. Switch output to WebP for much smaller files."}
-              </p>
+              <p className="mt-1.5 text-xs text-slate-500">{qualityHelp}</p>
             </div>
 
             <div>
@@ -190,12 +311,38 @@ export default function ImageCompressor({ mode = "all" }) {
                 {mode === "all" && <option value="auto">Same as original</option>}
                 <option value="image/jpeg">JPG — best for photos</option>
                 <option value="image/webp">WebP — smallest, keeps transparency</option>
-                <option value="image/png">PNG — lossless, keeps transparency</option>
+                <option value="image/png">PNG — Smart or lossless, keeps transparency</option>
               </select>
               <p className="mt-1.5 text-xs text-slate-500">
-                {mode === "png" ? "Tip: WebP keeps transparency and is often 70–90% smaller than PNG." : "JPG flattens transparency onto white."}
+                {format === "image/png"
+                  ? "For real PNG→PNG savings, keep Smart PNG selected below."
+                  : mode === "png" ? "Tip: WebP keeps transparency and is often 70–90% smaller than PNG." : "JPG flattens transparency onto white."}
               </p>
             </div>
+
+            {pngOutputActive && (
+              <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.05] p-4 md:col-span-3">
+                <div className="grid gap-3 sm:grid-cols-[280px_1fr] sm:items-center">
+                  <div>
+                    <label htmlFor="png-strategy" className="text-sm font-semibold text-white">PNG compression</label>
+                    <select
+                      id="png-strategy" value={pngStrategy} onChange={(e) => setPngStrategy(e.target.value)}
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-[#12152e] px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-400/70"
+                    >
+                      <option value="smart">Smart PNG — smaller file ★ recommended</option>
+                      <option value="lossless">Lossless PNG — identical pixels</option>
+                    </select>
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-400">
+                    {pngStrategy === "smart" ? (
+                      <>Smart PNG is still a real PNG. It uses an optimized colour palette (the TinyPNG/pngquant approach), keeps transparency, and commonly makes PNG→PNG files <strong className="text-emerald-200">40–85% smaller</strong>. Lower the Quality slider for fewer colours and an even smaller file.</>
+                    ) : (
+                      <>Lossless PNG preserves every pixel exactly and only re-optimizes the PNG encoding. That is safest for pixel-perfect assets, but an already optimized PNG may legitimately stay the same size (<strong className="text-amber-200">0%</strong>).</>
+                    )}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* actions */}

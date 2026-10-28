@@ -323,11 +323,11 @@ function resumeHtml(d, withPrint) {
 const emptyEntry = () => ({ title: "", org: "", dates: "", desc: "" });
 export function ResumeMaker() {
   const [d, setD] = useState({
-    name: "Ahmed Khan", title: "Sales Officer", email: "ahmedkhan@example.com", phone: "+92 300 1234567", city: "Karachi, Pakistan", website: "",
+    name: "Ahmed Khan", title: "Sales Officer", email: "ahmedkhan@example.com", phone: "+1 234 567 8900", city: "Your City", website: "",
     summary: "Hardworking and punctual professional with 3 years of experience. Strong communication skills, quick learner, and comfortable with MS Office and field work.",
     skills: "Communication\nMS Excel\nCustomer dealing\nUrdu / English typing", languages: "Urdu (native)\nEnglish (good)",
-    experiences: [{ title: "Sales Officer", org: "ABC Traders, Karachi", dates: "2022 — Present", desc: "Visited 40+ shops weekly and grew area sales by 25%\nPrepared daily sales reports in Excel" }],
-    education: [{ title: "Intermediate (Commerce)", org: "Board of Intermediate, Karachi", dates: "2020", desc: "" }],
+    experiences: [{ title: "Sales Officer", org: "ABC Traders", dates: "2022 — Present", desc: "Visited 40+ shops weekly and grew area sales by 25%\nPrepared daily sales reports in Excel" }],
+    education: [{ title: "Intermediate (Commerce)", org: "Board of Intermediate Education", dates: "2020", desc: "" }],
     color: "#b45309", template: "modern", photo: "",
   });
   useEffect(() => { try { const saved = localStorage.getItem("toolsstars-resume"); if (saved) setD(JSON.parse(saved)); } catch {} }, []);
@@ -393,7 +393,7 @@ export function ResumeMaker() {
           <button onClick={printPdf} className={btnP}><Icon name="pdf" size={17} /> Download PDF (Print → Save as PDF)</button>
           <button onClick={() => downloadBlob(new Blob([resumeHtml(d, false)], { type: "text/html" }), "my-cv.html")} className={btnGhost}><Icon name="download" size={15} /> Save as HTML</button>
         </div>
-        <p className="mt-2.5 text-xs text-slate-500">Your CV auto-saves in this browser only. Tip: many Pakistani employers prefer no photo unless asked — keep it optional.</p>
+        <p className="mt-2.5 text-xs text-slate-500">Your CV auto-saves in this browser only. Tip: many employers prefer no photo unless asked — keep it optional.</p>
       </div>
       <div className="xl:sticky xl:top-24 h-fit">
         <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Live A4 preview</p>

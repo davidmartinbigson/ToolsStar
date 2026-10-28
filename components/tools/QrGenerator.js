@@ -10,7 +10,7 @@ const TEMPLATES = [
   { id: "text", label: "Plain text", placeholder: "Type any text…" },
   { id: "wifi", label: "Wi-Fi", placeholder: "" },
   { id: "email", label: "Email", placeholder: "you@example.com" },
-  { id: "phone", label: "Phone", placeholder: "+92 300 1234567" },
+  { id: "phone", label: "Phone", placeholder: "+1 234 567 8900" },
 ];
 
 export default function QrGenerator() {

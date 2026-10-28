@@ -96,7 +96,7 @@ Alternatives that also work free: **Cloudflare Pages** and **Netlify** (both aut
 2. **Bing Webmaster Tools** → import from Search Console (Bing/DuckDuckGo traffic is free extra).
 3. **Analytics:** add Google Analytics 4 or Plausible by pasting their script in `app/layout.js`.
 4. **AdSense:** once approved, paste the AdSense script in `app/layout.js` and ad units in `components/ToolShell.js` (below the tool is the best-converting spot) — keep ads off the tool workspace itself so users stay happy.
-5. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates: Protect/Unlock PDF, PDF to Word-style layouts, dedicated WebP to PNG and JPG to WebP pages, more Pakistani calculators (salary/income tax, EMI/loan, BMI, electricity bill), date-of-joining to service-length calculators, and country-specific passport-photo pages.
+5. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates: Protect/Unlock PDF, PDF to Word-style layouts, dedicated WebP to PNG and JPG to WebP pages, more everyday calculators (salary/income tax, EMI/loan, BMI, electricity bill), date-of-joining to service-length calculators, and country-specific passport-photo pages.
 6. Share each tool page (not just the homepage) on Reddit/Pinterest/WhatsApp groups — tool pages convert, homepages bounce.
 
 ## 6. Add a new tool (5 minutes)
@@ -118,7 +118,7 @@ components/
   diagrams.js         The animated homepage diagrams (pure CSS/SVG, 0 JS)
   ToolShell.js        SEO layout shared by every tool page
   Dropzone.js         Drag-drop / paste upload box
-  tools/              Tool engines grouped by pack (pdfTools, pdfEssentials, growthTools, pakistanPack2, videoPack, audioPack, quickTools, imageDevPack, calcPack + standalone SignPdf…); heavy libraries load lazily per page
+  tools/              Tool engines grouped by pack (pdfTools, pdfEssentials, growthTools, miscPack2, videoPack, audioPack, quickTools, imageDevPack, calcPack + standalone SignPdf…); heavy libraries load lazily per page
 lib/
   tools.js            Tool catalog (single source of truth)
   site.js             Domain & site constants  ← change your domain here / via env

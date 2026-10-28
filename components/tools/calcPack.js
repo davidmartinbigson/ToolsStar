@@ -47,7 +47,7 @@ const fmt = (value, digits = 2) =>
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 /* Parse an <input type="date"> value as a LOCAL date (new Date("YYYY-MM-DD")
-   would be midnight UTC and can land on the wrong day in Pakistan). */
+   would be midnight UTC and can land on the wrong day in eastern timezones). */
 function parseLocalDate(value) {
   if (!value) return null;
   const [y, m, d] = String(value).split("-").map(Number);
@@ -518,7 +518,7 @@ export function GpaCalculator() {
       </section>
 
       <p className={noteCls}>
-        <strong>Formula:</strong> GPA = (credit hours × grade points) summed for every subject, divided by total credit hours. A 3-credit A (4.00) counts three times as much as a 1-credit lab. Some universities in Pakistan use slightly different point values (for example B- = 2.5 instead of 2.67) — always follow your own institution's grading policy for official results.
+        <strong>Formula:</strong> GPA = (credit hours × grade points) summed for every subject, divided by total credit hours. A 3-credit A (4.00) counts three times as much as a 1-credit lab. Some universities use slightly different point values (for example B- = 2.5 instead of 2.67) — always follow your own institution's grading policy for official results.
       </p>
     </div>
   );
@@ -534,7 +534,7 @@ const CURRENCIES = ["PKR", "USD", "GBP", "EUR", "AED", "SAR", "INR", "BDT"];
 function money(value, currency) {
   if (!Number.isFinite(value)) return `${currency} 0`;
   try {
-    return new Intl.NumberFormat("en-PK", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(value);
   } catch {
     return `${currency} ${fmt(value, 0)}`;
   }

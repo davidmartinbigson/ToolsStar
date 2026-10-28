@@ -3,10 +3,10 @@ import { ZakatCalculator } from "@/components/tools/calcPack";
 import { getTool } from "@/lib/tools";
 
 export const metadata = {
-  title: "Zakat Calculator Pakistan — Gold, Silver, Cash & Nisab (PKR)",
+  title: "Zakat Calculator — Gold, Silver, Cash & Nisab (Free Online)",
   description:
-    "Calculate your zakat in PKR: gold and silver by tola or gram, cash, bank savings, shares, business stock and money owed to you, minus debts. Instant nisab check and the 2.5% amount due. Free and private.",
-  keywords: ["zakat calculator", "zakat calculator pakistan", "gold zakat calculator", "nisab calculator", "zakat on savings", "zakat calculation pkr", "zakat on gold tola"],
+    "Calculate your zakat in your own currency: gold and silver by tola or gram, cash, bank savings, shares, business stock and money owed to you, minus debts. Instant nisab check and the 2.5% amount due. Free and private.",
+  keywords: ["zakat calculator", "zakat calculator online free", "gold zakat calculator", "nisab calculator", "zakat on savings", "zakat on gold and silver"],
   alternates: { canonical: "/tools/zakat-calculator" },
   openGraph: {
     title: "Zakat Calculator — Gold, Cash & Nisab | Tools Stars",
@@ -29,7 +29,7 @@ export default function Page() {
         "Nisab checked against silver (612.36 g) or gold (87.48 g), your choice",
         "Covers cash, bank savings, shares, business stock and receivables",
         "Debts and bills due are subtracted before the 2.5% is applied",
-        "PKR by default, plus USD, GBP, EUR, AED, SAR, INR and BDT",
+        "Eight currencies: PKR, USD, GBP, EUR, AED, SAR, INR and BDT",
         "Full working shown: total assets, deductions, net wealth, nisab, zakat due",
         "Nothing you type is stored or sent — the figures stay in your browser",
       ]}

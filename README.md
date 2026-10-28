@@ -33,7 +33,7 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | PDF to JPG | `/tools/pdf-to-jpg` | PDF.js rendering 72–300 DPI, per-page/ZIP download |
 | Compress Image to KB | `/tools/compress-image-to-kb` | Binary-search quality/size to hit an exact KB target |
 | Passport Photo Maker | `/tools/passport-photo-maker` | 300-DPI official sizes, optional AI background, A4 print sheet |
-| Resume / CV Maker | `/tools/resume-maker` | 3 templates, localStorage autosave, print-to-PDF output |
+| Resume / CV Maker | `/tools/resume-maker` | 8 templates (3 two-column, 5 single-column incl. parser-safe ATS), photo square-crop with 3 shapes/3 sizes, 8 accent colours, localStorage autosave, print-to-PDF |
 | Video to GIF | `/tools/video-to-gif` | gif.js with seek-capture frames, blob-worker workaround |
 | Video Trimmer | `/tools/video-trimmer` | Canvas + MediaRecorder segment recording |
 | Screen Recorder | `/tools/screen-recorder` | getDisplayMedia + MediaRecorder, optional mic |

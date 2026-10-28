@@ -1,5 +1,5 @@
 import ToolShell from "@/components/ToolShell";
-import { CompressPdfToKb } from "@/components/tools/pakistanPack2";
+import { CompressPdfToKb } from "@/components/tools/miscPack2";
 import { getTool } from "@/lib/tools";
 
 export const metadata = {

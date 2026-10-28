@@ -31,7 +31,7 @@ export default function Page() {
       ]}
       faqs={[
         { q: "How do I convert multiple JPGs into one PDF?", a: "Add all the images at once, arrange them with the arrow buttons until the page numbers look right, choose A4 (or your preferred page), then press Create PDF. You'll get a single multi-page PDF file." },
-        { q: "Which page size should I choose?", a: "A4 for most of the world (including Pakistan, UK, EU), US Letter for American forms, and 'Fit to image' when you want edge-to-edge photos with no white borders." },
+        { q: "Which page size should I choose?", a: "A4 for most of the world (UK, EU and South Asia), US Letter for American forms, and 'Fit to image' when you want edge-to-edge photos with no white borders." },
         { q: "Will my PDF be good enough quality for printing?", a: "Yes. Images are embedded at high JPEG quality and placed without being downscaled, so scans and photos stay sharp. For best results start with clear, well-lit originals." },
         { q: "Can I use this for documents like CNIC, certificates or assignments?", a: "Absolutely — and it's safer than most tools: your sensitive documents are combined into a PDF entirely on your own device and are never uploaded to anyone's server." },
         { q: "Is there a page limit?", a: "You can add up to 60 images per PDF here, with no daily limits and no watermarks." },

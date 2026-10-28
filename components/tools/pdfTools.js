@@ -253,10 +253,16 @@ export function SplitPdf() {
 }
 
 /* ════════════════════════ PDF TO JPG ════════════════════════ */
-export function PdfToJpg() {
+export function PdfToJpg({
+  defaultFormat = "image/jpeg",
+  lockFormat = false,
+  dropTitle = "Drop a PDF to convert to images",
+  dropHint = "Every page becomes a JPG, PNG or WebP picture",
+  zipName = "toolsstars-pdf-images.zip",
+}) {
   const [item, setItem] = useState(null);
   const [dpi, setDpi] = useState(150);
-  const [format, setFormat] = useState("image/jpeg");
+  const [format, setFormat] = useState(defaultFormat);
   const [quality, setQuality] = useState(88);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(null);
@@ -302,7 +308,7 @@ export function PdfToJpg() {
 
   return (
     <div>
-      {!item && <Dropzone accept="application/pdf,.pdf" onFiles={add} title="Drop a PDF to convert to images" hint="Every page becomes a JPG, PNG or WebP picture" icon="image" />}
+      {!item && <Dropzone accept="application/pdf,.pdf" onFiles={add} title={dropTitle} hint={dropHint} icon="image" />}
       <Alert msg={error} />
       {item && (
         <>
@@ -311,21 +317,29 @@ export function PdfToJpg() {
             <span className="min-w-0 flex-1"><span className="block truncate font-semibold text-white">{item.file.name}</span><span className="text-xs text-slate-500">{item.pages} pages · {formatBytes(item.file.size)}</span></span>
             <button onClick={() => { setItem(null); setResults([]); setPct(null); }} className={btnGhost}><Icon name="trash" size={15} /> Different PDF</button>
           </div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-3">
+          <div className={`mt-5 grid gap-4 ${lockFormat ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
             <div><label className="text-sm font-semibold text-white">Resolution (DPI)</label>
               <select value={dpi} onChange={(e) => setDpi(+e.target.value)} className={selectCls}>
                 <option value={72}>72 DPI — screen / smallest</option><option value={150}>150 DPI — good ★</option><option value={200}>200 DPI — sharp</option><option value={300}>300 DPI — print quality</option>
               </select></div>
-            <div><label className="text-sm font-semibold text-white">Image format</label>
-              <select value={format} onChange={(e) => setFormat(e.target.value)} className={selectCls}>
-                <option value="image/jpeg">JPG — smallest, universal</option><option value="image/png">PNG — lossless, crisp text</option><option value="image/webp">WebP — modern & small</option>
-              </select></div>
-            <div><label className="flex justify-between text-sm font-semibold text-white">Quality <span className="font-bold text-amber-300">{quality}%</span></label>
-              <input type="range" min="40" max="100" value={quality} disabled={format === "image/png"} onChange={(e) => setQuality(+e.target.value)} className="mt-3.5 w-full disabled:opacity-40" /></div>
+            {!lockFormat && (
+              <div><label className="text-sm font-semibold text-white">Image format</label>
+                <select value={format} onChange={(e) => setFormat(e.target.value)} className={selectCls}>
+                  <option value="image/jpeg">JPG — smallest, universal</option><option value="image/png">PNG — lossless, crisp text</option><option value="image/webp">WebP — modern & small</option>
+                </select></div>
+            )}
+            {lockFormat && format === "image/png" ? (
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] px-4 py-3 text-xs leading-relaxed text-slate-400">
+                <strong className="text-slate-200">PNG is lossless</strong> — there is no quality slider to lose detail. Raise the DPI instead if text needs to be sharper: 200–300 DPI suits printing and close-up screenshots.
+              </div>
+            ) : (
+              <div><label className="flex justify-between text-sm font-semibold text-white">Quality <span className="font-bold text-amber-300">{quality}%</span></label>
+                <input type="range" min="40" max="100" value={quality} disabled={format === "image/png"} onChange={(e) => setQuality(+e.target.value)} className="mt-3.5 w-full disabled:opacity-40" /></div>
+            )}
           </div>
           <div className="mt-6 flex flex-wrap gap-3">
             <button onClick={run} disabled={busy} className={btnPrimary}><Icon name="image" size={18} /> {busy ? "Converting…" : `Convert ${item.pages} pages`}</button>
-            {results.length > 1 && <button disabled={zipping || busy} onClick={async () => { setZipping(true); await downloadZip(results, "toolsstars-pdf-images.zip"); setZipping(false); }} className={btnGreen}><Icon name="download" size={17} /> {zipping ? "Zipping…" : "Download all as ZIP"}</button>}
+            {results.length > 1 && <button disabled={zipping || busy} onClick={async () => { setZipping(true); await downloadZip(results, zipName); setZipping(false); }} className={btnGreen}><Icon name="download" size={17} /> {zipping ? "Zipping…" : "Download all as ZIP"}</button>}
           </div>
           <Progress pct={busy || pct ? pct : null} text={busy ? "Rendering pages one by one on your device…" : ""} />
           {results.length > 0 && (
@@ -345,6 +359,19 @@ export function PdfToJpg() {
         </>
       )}
     </div>
+  );
+}
+
+/* Dedicated PNG landing page — same engine, format locked to lossless PNG. */
+export function PdfToPng() {
+  return (
+    <PdfToJpg
+      defaultFormat="image/png"
+      lockFormat
+      dropTitle="Drop a PDF to convert to PNG images"
+      dropHint="Every page becomes a crisp, lossless PNG — perfect for text and diagrams"
+      zipName="toolsstars-pdf-pages-png.zip"
+    />
   );
 }
 

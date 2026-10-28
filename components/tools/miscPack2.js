@@ -745,7 +745,7 @@ export function SolarLoadCalculator() {
           <div className="rounded-3xl border border-white/[0.08] bg-white/[0.02] p-5">
             <label htmlFor="solar-sun" className="flex justify-between text-sm font-semibold text-white">Average useful sun hours <span className="text-amber-300">{sunHours} hrs/day</span></label>
             <input id="solar-sun" type="range" min="3" max="7" step="0.25" value={sunHours} onChange={(e) => setSunHours(Number(e.target.value))} className="mt-4 w-full" />
-            <p className="mt-1 text-xs text-slate-500">5–6 hours is a reasonable starting estimate for many sunny areas of Pakistan. Shade and panel direction matter.</p>
+            <p className="mt-1 text-xs text-slate-500">5–6 hours is a reasonable starting estimate for many sunny regions. Shade and panel direction matter.</p>
             <label htmlFor="solar-panel" className="mt-5 block text-sm font-semibold text-white">Panel size</label>
             <select id="solar-panel" value={panelWatts} onChange={(e) => setPanelWatts(Number(e.target.value))} className={selectCls}>
               <option value={550}>550W panel</option><option value={585}>585W panel ★</option><option value={610}>610W panel</option><option value={450}>450W panel</option>

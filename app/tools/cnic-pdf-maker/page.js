@@ -1,5 +1,5 @@
 import ToolShell from "@/components/ToolShell";
-import { CnicPdfMaker } from "@/components/tools/pakistanPack2";
+import { CnicPdfMaker } from "@/components/tools/miscPack2";
 import { getTool } from "@/lib/tools";
 
 export const metadata = {

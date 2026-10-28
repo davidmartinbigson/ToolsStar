@@ -293,45 +293,128 @@ export function PassportPhotoMaker() {
 const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const lines = (s) => String(s || "").split("\n").map((x) => x.trim()).filter(Boolean);
 
+/* Eight layouts: three two-column, five single-column. The ATS one deliberately
+   drops colour, graphics and the photo because parser software reads plain text
+   headings most reliably. */
+const CV_TEMPLATES = [
+  { id: "modern", name: "Modern Sidebar", hint: "Dark left column, photo on top", group: "Two-column" },
+  { id: "sidebar", name: "Clean Sidebar", hint: "Light left column, coloured headings", group: "Two-column" },
+  { id: "elegant", name: "Elegant", hint: "Slim colour rail, details on the right", group: "Two-column" },
+  { id: "classic", name: "Classic", hint: "Centred header — timeless and safe", group: "Single-column" },
+  { id: "professional", name: "Professional", hint: "Name left, contact right, compact", group: "Single-column" },
+  { id: "minimal", name: "Minimal", hint: "Serif type, generous white space", group: "Single-column" },
+  { id: "creative", name: "Creative", hint: "Bold colour band + skill chips", group: "Single-column" },
+  { id: "ats", name: "ATS-Friendly", hint: "Plain black text, parser-safe (no photo)", group: "Single-column" },
+];
+
+const CV_COLORS = ["#b45309", "#1d4ed8", "#047857", "#7c3aed", "#be123c", "#0f766e", "#c2410c", "#111827"];
+const PHOTO_SHAPES = [["circle", "Circle"], ["rounded", "Rounded"], ["square", "Square"]];
+const PHOTO_SIZES = [["sm", "Small"], ["md", "Medium"], ["lg", "Large"]];
+
 function resumeHtml(d, withPrint) {
   const accent = d.color || "#b45309";
+  const template = CV_TEMPLATES.some((t) => t.id === d.template) ? d.template : "modern";
+  const name = esc(d.name) || "Your Name";
+  const title = esc(d.title);
+  const photoCls = `photo ${d.photoShape || "circle"} ${d.photoSize || "md"}`;
+  const photo = d.photo ? `<img class="${photoCls}" src="${d.photo}" alt="Profile photo"/>` : "";
+
   const exps = d.experiences.filter((e) => e.title || e.org).map((e) => `<div class="job"><div class="row"><strong>${esc(e.title)}</strong><span>${esc(e.dates)}</span></div><div class="org">${esc(e.org)}</div><p>${lines(e.desc).map((l) => "• " + esc(l)).join("<br>")}</p></div>`).join("");
-  const edus = d.education.filter((e) => e.title || e.org).map((e) => `<div class="job"><div class="row"><strong>${esc(e.title)}</strong><span>${esc(e.dates)}</span></div><div class="org">${esc(e.org)}</div><p>${esc(e.desc)}</p></div>`).join("");
-  const skills = lines(d.skills).join(" · "); const skillBullets = lines(d.skills).map((s) => `<div>• ${esc(s)}</div>`).join("");
-  const langs = lines(d.languages).map((s) => `<div>• ${esc(s)}</div>`).join("");
-  const contact = [d.email, d.phone, d.city, d.website].filter(Boolean).map(esc).join(" · ");
-  const photo = d.photo ? `<img src="${d.photo}" style="width:96px;height:96px;object-fit:cover;border-radius:50%"/>` : "";
+  const edus = d.education.filter((e) => e.title || e.org).map((e) => `<div class="job"><div class="row"><strong>${esc(e.title)}</strong><span>${esc(e.dates)}</span></div><div class="org">${esc(e.org)}</div><p>${lines(e.desc).map((l) => "• " + esc(l)).join("<br>")}</p></div>`).join("");
+
+  const skillList = lines(d.skills);
+  const skillLine = skillList.join(" · ");
+  const skillBullets = skillList.map((s) => `<div>• ${esc(s)}</div>`).join("");
+  const skillChips = skillList.map((s) => `<span class="chip">${esc(s)}</span>`).join("");
+  const langList = lines(d.languages);
+  const langLine = langList.join(" · ");
+  const langs = langList.map((s) => `<div>• ${esc(s)}</div>`).join("");
+  const contactList = [d.email, d.phone, d.city, d.website].filter(Boolean);
+  const contact = contactList.map(esc).join(" · ");
+  const contactDivs = contactList.map((x) => `<div>${esc(x)}</div>`).join("");
+  const summary = d.summary ? `<h2>Profile</h2><p>${esc(d.summary)}</p>` : "";
+  const skillsSection = skillLine ? `<h2>Skills</h2><p>${esc(skillLine)}</p>` : "";
+  const langsSection = langLine ? `<h2>Languages</h2><p>${esc(langLine)}</p>` : "";
+
+  /* sidebar content reused by modern / sidebar / elegant */
+  const asideInner = `${photo}<h3>Contact</h3><div class="side">${contactDivs}</div>${skillBullets ? `<h3>Skills</h3><div class="side">${skillBullets}</div>` : ""}${langs ? `<h3>Languages</h3><div class="side">${langs}</div>` : ""}`;
+
   let body = "";
-  if (d.template === "modern") {
-    body = `<div class="page modern"><aside>${photo}<h3>Contact</h3><div class="side">${[d.email, d.phone, d.city, d.website].filter(Boolean).map((x) => `<div>${esc(x)}</div>`).join("")}</div><h3>Skills</h3><div class="side">${skillBullets}</div>${langs ? `<h3>Languages</h3><div class="side">${langs}</div>` : ""}</aside><main><h1>${esc(d.name) || "Your Name"}</h1><div class="title">${esc(d.title)}</div>${d.summary ? `<h2>Profile</h2><p>${esc(d.summary)}</p>` : ""}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}</main></div>`;
+  if (template === "modern" || template === "sidebar") {
+    body = `<div class="page ${template}"><aside>${asideInner}</aside><main><h1>${name}</h1><div class="title">${title}</div>${summary}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}</main></div>`;
+  } else if (template === "elegant") {
+    body = `<div class="page elegant"><div class="rail"></div><div class="wrap"><main><h1>${name}</h1><div class="title">${title}</div>${summary}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}</main><aside>${asideInner}</aside></div></div>`;
+  } else if (template === "professional") {
+    body = `<div class="page professional"><header><div><h1>${name}</h1><div class="title">${title}</div></div><div class="contact">${contactDivs}</div>${photo}</header>${summary}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}${skillsSection}${langsSection}</div>`;
+  } else if (template === "minimal") {
+    body = `<div class="page minimal"><header>${photo}<h1>${name}</h1><div class="title">${title}</div><div class="contact">${contact}</div></header>${summary}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}${skillsSection}${langsSection}</div>`;
+  } else if (template === "creative") {
+    body = `<div class="page creative"><div class="band">${photo}<h1>${name}</h1><div class="title">${title}</div><div class="contact">${contact}</div></div><div class="inner">${summary}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}${skillChips ? `<h2>Skills</h2><div class="chips">${skillChips}</div>` : ""}${langList.length ? `<h2>Languages</h2><div class="chips">${langList.map((l) => `<span class="chip">${esc(l)}</span>`).join("")}</div>` : ""}</div></div>`;
+  } else if (template === "ats") {
+    body = `<div class="page ats"><header><h1>${name}</h1><div class="title">${title}</div><div class="contact">${contact}</div></header>${d.summary ? `<h2>Summary</h2><p>${esc(d.summary)}</p>` : ""}<h2>Work Experience</h2>${exps}<h2>Education</h2>${edus}${skillsSection}${langsSection}</div>`;
   } else {
-    body = `<div class="page ${d.template}"><header>${photo}<h1>${esc(d.name) || "Your Name"}</h1><div class="title">${esc(d.title)}</div><div class="contact">${contact}</div></header>${d.summary ? `<h2>Profile</h2><p>${esc(d.summary)}</p>` : ""}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}${skills ? `<h2>Skills</h2><p>${esc(skills)}</p>` : ""}${langs ? `<h2>Languages</h2>${langs}` : ""}</div>`;
+    body = `<div class="page classic"><header>${photo}<h1>${name}</h1><div class="title">${title}</div><div class="contact">${contact}</div></header>${summary}<h2>Experience</h2>${exps}<h2>Education</h2>${edus}${skillsSection}${langsSection}</div>`;
   }
+
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(d.name)} — CV</title><style>
   @page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#1f2430;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .page{width:210mm;min-height:296mm;margin:0 auto;background:#fff;padding:16mm}
-  h1{margin:0;font-size:30px;line-height:1.1}.title{color:${accent};font-weight:700;margin-top:3px;font-size:15px}.contact{color:#555;font-size:12.5px;margin-top:6px}
+  h1{margin:0;font-size:30px;line-height:1.1}.title{color:${accent};font-weight:700;margin-top:3px;font-size:15px}.contact{color:#555;font-size:12.5px;margin-top:6px;line-height:1.5}
   h2{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:${accent};border-bottom:2px solid ${accent};padding-bottom:4px;margin:20px 0 10px}
-  p{font-size:13px;line-height:1.55;margin:4px 0}.job{margin-bottom:12px}.row{display:flex;justify-content:space-between;font-size:14px}.row span{color:#666;font-size:12px}.org{color:${accent};font-weight:600;font-size:13px}
+  p{font-size:13px;line-height:1.55;margin:4px 0}.job{margin-bottom:12px}.row{display:flex;justify-content:space-between;gap:10px;font-size:14px}.row span{color:#666;font-size:12px;white-space:nowrap}.org{color:${accent};font-weight:600;font-size:13px}
   header{text-align:center;border-bottom:3px solid ${accent};padding-bottom:12px}header img{margin-bottom:8px}
-  .minimal{font-family:Georgia,serif}.minimal header{text-align:left}.minimal h2{border-bottom:1px solid #ccc}
-  .modern{display:flex;padding:0}.modern aside{width:62mm;background:#232838;color:#e8eaf6;padding:14mm 9mm;min-height:296mm}.modern aside h3{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#ffc531;margin:18px 0 8px}.modern .side{font-size:12.5px;line-height:1.7;word-break:break-word}.modern main{flex:1;padding:16mm 14mm}
+  .photo{object-fit:cover;display:block;background:#fff}
+  .photo.circle{border-radius:50%}.photo.rounded{border-radius:12px}.photo.square{border-radius:0}
+  .photo.sm{width:72px;height:72px}.photo.md{width:96px;height:96px}.photo.lg{width:124px;height:124px}
+  .chip{display:inline-block;border:1px solid ${accent};color:${accent};border-radius:999px;padding:2px 10px;font-size:11.5px;margin:0 5px 6px 0}
+  /* two-column: dark sidebar */
+  .modern{display:flex;padding:0}.modern aside{width:62mm;background:#232838;color:#e8eaf6;padding:14mm 9mm;min-height:296mm}.modern aside h3{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#ffc531;margin:18px 0 8px}.modern aside h3:first-of-type{margin-top:14px}.modern .side{font-size:12.5px;line-height:1.7;word-break:break-word}.modern main{flex:1;padding:16mm 14mm}.modern .photo{margin:0 auto 6px;border:3px solid rgba(255,255,255,.25)}
+  /* two-column: light sidebar */
+  .sidebar{display:flex;padding:0}.sidebar aside{width:62mm;background:#f4f5f7;color:#2a2f3a;padding:14mm 9mm;min-height:296mm;border-right:1px solid #e3e5ea}.sidebar aside h3{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:${accent};margin:18px 0 8px}.sidebar aside h3:first-of-type{margin-top:14px}.sidebar .side{font-size:12.5px;line-height:1.7;word-break:break-word}.sidebar main{flex:1;padding:16mm 14mm}.sidebar .photo{margin:0 auto 6px;border:1px solid #dfe2e8}
+  /* two-column: accent rail, details right */
+  .elegant{display:flex;padding:0}.elegant .rail{width:7mm;background:${accent};min-height:296mm}.elegant .wrap{flex:1;display:flex}.elegant main{flex:1;padding:16mm 10mm 16mm 14mm}.elegant aside{width:52mm;padding:16mm 10mm 16mm 4mm;border-left:1px solid #e6e8ee}.elegant aside h3{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:${accent};margin:16px 0 6px}.elegant .side{font-size:12px;line-height:1.7;word-break:break-word;color:#3a4051}.elegant h1{font-weight:300;font-size:34px;letter-spacing:.02em}.elegant h2{border-bottom:1px solid #d9dce3;color:#1f2430;font-weight:700}.elegant .photo{margin-bottom:8px}
+  /* single-column: name left, contact right */
+  .professional header{display:flex;align-items:flex-start;gap:14px;text-align:left;border-bottom:2px solid ${accent};padding-bottom:10px}.professional header>div:first-child{flex:1}.professional .contact{text-align:right;margin-top:4px;flex:0 1 auto}.professional .photo{margin-left:auto}.professional h2{margin:16px 0 8px}
+  /* single-column: serif */
+  .minimal{font-family:Georgia,"Times New Roman",serif}.minimal header{text-align:left;border-bottom:1px solid #ccc;display:flex;align-items:center;gap:14px}.minimal header>img{margin:0}.minimal h2{border-bottom:1px solid #ccc;color:#1f2430}.minimal .title{color:#444}.minimal .org{color:#333}
+  /* single-column: colour band */
+  .creative{padding:0}.creative .band{background:${accent};color:#fff;padding:13mm 16mm}.creative .band h1{font-size:34px}.creative .band .title{color:#fff;opacity:.92}.creative .band .contact{color:#fff;opacity:.9}.creative .band .photo{float:right;margin:-4mm 0 0 6mm;border:3px solid rgba(255,255,255,.55)}.creative .inner{padding:11mm 16mm 14mm}.creative h2{border-bottom:none;padding-bottom:0;margin:16px 0 8px}.creative .chips{margin-top:2px}
+  /* single-column: parser-safe */
+  .ats{font-family:"Times New Roman",Times,serif;padding:18mm 20mm}.ats h1{font-size:23px;text-align:center;text-transform:uppercase;letter-spacing:.08em}.ats .title{text-align:center;color:#333;font-weight:400;font-size:14px}.ats .contact{text-align:center;color:#333}.ats header{border-bottom:1px solid #000;padding-bottom:8px}.ats h2{color:#000;border-bottom:1px solid #000;font-size:12px;margin:14px 0 6px}.ats .org{color:#000;font-weight:700}.ats .row span{color:#333}.ats p{font-size:12.5px}
   @media print{body{background:#fff}}
   </style>${withPrint ? "<script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>" : ""}</head><body>${body}</body></html>`;
 }
 
 const emptyEntry = () => ({ title: "", org: "", dates: "", desc: "" });
+
+const SAMPLE_CV = {
+  name: "Ahmed Khan", title: "Sales Officer", email: "ahmedkhan@example.com", phone: "+1 234 567 8900", city: "Your City", website: "",
+  summary: "Hardworking and punctual professional with 3 years of experience. Strong communication skills, quick learner, and comfortable with MS Office and field work.",
+  skills: "Communication\nMS Excel\nCustomer dealing\nUrdu / English typing", languages: "Urdu (native)\nEnglish (good)",
+  experiences: [{ title: "Sales Officer", org: "ABC Traders", dates: "2022 — Present", desc: "Visited 40+ shops weekly and grew area sales by 25%\nPrepared daily sales reports in Excel" }],
+  education: [{ title: "Intermediate (Commerce)", org: "Board of Intermediate Education", dates: "2020", desc: "" }],
+  color: "#b45309", template: "modern", photo: "", photoShape: "circle", photoSize: "md",
+};
+
+const BLANK_CV = {
+  name: "", title: "", email: "", phone: "", city: "", website: "", summary: "", skills: "", languages: "",
+  experiences: [emptyEntry()], education: [emptyEntry()],
+  color: "#b45309", template: "modern", photo: "", photoShape: "circle", photoSize: "md",
+};
+
 export function ResumeMaker() {
-  const [d, setD] = useState({
-    name: "Ahmed Khan", title: "Sales Officer", email: "ahmedkhan@example.com", phone: "+1 234 567 8900", city: "Your City", website: "",
-    summary: "Hardworking and punctual professional with 3 years of experience. Strong communication skills, quick learner, and comfortable with MS Office and field work.",
-    skills: "Communication\nMS Excel\nCustomer dealing\nUrdu / English typing", languages: "Urdu (native)\nEnglish (good)",
-    experiences: [{ title: "Sales Officer", org: "ABC Traders", dates: "2022 — Present", desc: "Visited 40+ shops weekly and grew area sales by 25%\nPrepared daily sales reports in Excel" }],
-    education: [{ title: "Intermediate (Commerce)", org: "Board of Intermediate Education", dates: "2020", desc: "" }],
-    color: "#b45309", template: "modern", photo: "",
-  });
-  useEffect(() => { try { const saved = localStorage.getItem("toolsstars-resume"); if (saved) setD(JSON.parse(saved)); } catch {} }, []);
+  const [d, setD] = useState(SAMPLE_CV);
+  const [photoNote, setPhotoNote] = useState("");
+
+  // merge over SAMPLE_CV so CVs saved by older versions still get the new fields
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("toolsstars-resume");
+      if (saved) setD({ ...SAMPLE_CV, ...JSON.parse(saved) });
+    } catch {}
+  }, []);
   useEffect(() => { try { localStorage.setItem("toolsstars-resume", JSON.stringify(d)); } catch {} }, [d]);
+
   const set = (k, v) => setD((p) => ({ ...p, [k]: v }));
   const setEntry = (key, i, k, v) => setD((p) => ({ ...p, [key]: p[key].map((e, j) => j === i ? { ...e, [k]: v } : e) }));
   const html = useMemo(() => resumeHtml(d, false), [d]);
@@ -343,7 +426,23 @@ export function ResumeMaker() {
     if (!w) downloadBlob(blob, "my-cv.html");
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
-  const onPhoto = (f) => { if (!f) return; const r = new FileReader(); r.onload = () => set("photo", r.result); r.readAsDataURL(f); };
+
+  /* Centre-crop to a 400×400 JPEG before storing: keeps the CV sharp at any
+     template size while staying far inside the localStorage quota. */
+  const onPhoto = async (file) => {
+    if (!file) return;
+    setPhotoNote("");
+    try {
+      const loaded = await loadImage(file);
+      const blob = await renderToBlob(loaded.img, { width: 400, height: 400, type: "image/jpeg", quality: 0.88, background: "#ffffff", fit: "cover" });
+      URL.revokeObjectURL(loaded.url);
+      const reader = new FileReader();
+      reader.onload = () => { set("photo", reader.result); setPhotoNote("Photo added — cropped to a square and resized so your CV saves instantly."); };
+      reader.readAsDataURL(blob);
+    } catch {
+      setPhotoNote("That image could not be opened. Please use a JPG or PNG photo.");
+    }
+  };
 
   const renderField = (label, k) => (
     <label className="block" key={k}>
@@ -351,6 +450,7 @@ export function ResumeMaker() {
       <input value={d[k]} onChange={(e) => set(k, e.target.value)} className={inp} />
     </label>
   );
+
   const renderEntries = (title, keyName) => (
     <fieldset className="mt-5">
       <legend className="text-sm font-bold text-white">{title}</legend>
@@ -367,6 +467,8 @@ export function ResumeMaker() {
     </fieldset>
   );
 
+  const groups = ["Two-column", "Single-column"];
+
   return (
     <div className="grid gap-6 xl:grid-cols-2">
       <div>
@@ -381,22 +483,98 @@ export function ResumeMaker() {
         </div>
         {renderEntries("Experience", "experiences")}
         {renderEntries("Education", "education")}
-        <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <label className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-400">Template</span>
-            <select value={d.template} onChange={(e) => set("template", e.target.value)} className={sel}><option value="modern">Modern (sidebar)</option><option value="classic">Classic</option><option value="minimal">Minimal</option></select></label>
-          <label className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-400">Accent colour</span>
-            <span className="mt-2 flex gap-1.5">{["#b45309", "#1d4ed8", "#047857", "#7c3aed", "#be123c", "#111827"].map((c) => <button key={c} onClick={() => set("color", c)} aria-label={c} className={`h-8 w-8 rounded-full border-2 ${d.color === c ? "border-amber-300 scale-110" : "border-white/20"}`} style={{ background: c }} />)}</span></label>
-          <label className="block"><span className="text-xs font-bold uppercase tracking-wide text-slate-400">Photo (optional)</span>
-            <input type="file" accept="image/*" onChange={(e) => onPhoto(e.target.files?.[0])} className="mt-2 block w-full text-xs text-slate-400 file:mr-2 file:rounded-lg file:border-0 file:bg-amber-400 file:px-3 file:py-2 file:font-bold file:text-[#241a00]" /></label>
+
+        {/* ── template gallery ── */}
+        <fieldset className="mt-6">
+          <legend className="text-sm font-bold text-white">Choose a template <span className="font-normal text-slate-500">({CV_TEMPLATES.length} designs)</span></legend>
+          {groups.map((group) => (
+            <div key={group} className="mt-3">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{group}</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {CV_TEMPLATES.filter((t) => t.group === group).map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => set("template", t.id)}
+                    aria-pressed={d.template === t.id}
+                    className={`rounded-2xl border px-3.5 py-2.5 text-left transition ${d.template === t.id ? "border-amber-400 bg-amber-400/10 text-white" : "border-white/10 bg-white/[0.02] text-slate-300 hover:border-white/25"}`}
+                  >
+                    <span className="block text-sm font-bold">{t.name}{d.template === t.id && <span className="ml-1.5 text-amber-300">✓</span>}</span>
+                    <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">{t.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </fieldset>
+
+        {/* ── photo ── */}
+        <fieldset className="mt-6">
+          <legend className="text-sm font-bold text-white">Photo <span className="font-normal text-slate-500">(optional)</span></legend>
+          <div className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <span className="grid h-[76px] w-[76px] shrink-0 place-items-center overflow-hidden rounded-2xl border border-white/10 bg-[#12152e]">
+                {d.photo
+                  ? /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={d.photo} alt="Your CV photo" className="h-full w-full object-cover" />
+                  : <Icon name="image" size={24} className="text-slate-600" />}
+              </span>
+              <div className="min-w-[200px] flex-1">
+                <input type="file" accept="image/*" onChange={(e) => onPhoto(e.target.files?.[0])} aria-label="Upload your photo" className="block w-full text-xs text-slate-400 file:mr-2 file:rounded-lg file:border-0 file:bg-amber-400 file:px-3 file:py-2 file:font-bold file:text-[#241a00]" />
+                <div className="mt-2.5 flex flex-wrap gap-3">
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Shape</span>
+                    {PHOTO_SHAPES.map(([v, l]) => (
+                      <button key={v} type="button" onClick={() => set("photoShape", v)} aria-pressed={d.photoShape === v} className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition ${d.photoShape === v ? "border-amber-400 bg-amber-400/10 text-white" : "border-white/10 text-slate-400 hover:border-white/25"}`}>{l}</button>
+                    ))}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Size</span>
+                    {PHOTO_SIZES.map(([v, l]) => (
+                      <button key={v} type="button" onClick={() => set("photoSize", v)} aria-pressed={d.photoSize === v} className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition ${d.photoSize === v ? "border-amber-400 bg-amber-400/10 text-white" : "border-white/10 text-slate-400 hover:border-white/25"}`}>{l}</button>
+                    ))}
+                  </span>
+                </div>
+              </div>
+              {d.photo && (
+                <button type="button" onClick={() => { set("photo", ""); setPhotoNote(""); }} className="rounded-xl border border-white/10 px-3 py-2 text-xs font-bold text-slate-300 transition hover:border-rose-400/40 hover:text-rose-300">
+                  <Icon name="trash" size={14} /> Remove
+                </button>
+              )}
+            </div>
+            {photoNote && <p className="mt-2.5 text-xs text-emerald-300" role="status">{photoNote}</p>}
+            <p className="mt-2.5 text-xs leading-relaxed text-slate-500">
+              Photos are cropped to a square and resized on your device before they are stored, so your CV keeps auto-saving instantly. The <strong className="text-slate-300">ATS-Friendly</strong> template leaves the photo out on purpose — applicant-tracking software reads text, not images.
+            </p>
+          </div>
+        </fieldset>
+
+        {/* ── accent colour ── */}
+        <div className="mt-5">
+          <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Accent colour</span>
+          <span className="mt-2 flex flex-wrap gap-2">
+            {CV_COLORS.map((c) => (
+              <button key={c} type="button" onClick={() => set("color", c)} aria-label={`Accent colour ${c}`} aria-pressed={d.color === c} className={`h-8 w-8 rounded-full border-2 transition ${d.color === c ? "scale-110 border-amber-300" : "border-white/20"}`} style={{ background: c }} />
+            ))}
+          </span>
+          {d.template === "ats" && <p className="mt-2 text-xs text-slate-500">The ATS template stays black-and-white by design; this colour applies to the other seven templates.</p>}
         </div>
+
         <div className="mt-6 flex flex-wrap gap-3">
           <button onClick={printPdf} className={btnP}><Icon name="pdf" size={17} /> Download PDF (Print → Save as PDF)</button>
           <button onClick={() => downloadBlob(new Blob([resumeHtml(d, false)], { type: "text/html" }), "my-cv.html")} className={btnGhost}><Icon name="download" size={15} /> Save as HTML</button>
         </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" onClick={() => setD({ ...SAMPLE_CV, photo: d.photo })} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-bold text-slate-300 transition hover:border-amber-400/50"><Icon name="refresh" size={13} /> Load sample CV</button>
+          <button type="button" onClick={() => setD({ ...BLANK_CV })} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-bold text-slate-300 transition hover:border-rose-400/40 hover:text-rose-300"><Icon name="trash" size={13} /> Clear everything</button>
+        </div>
         <p className="mt-2.5 text-xs text-slate-500">Your CV auto-saves in this browser only. Tip: many employers prefer no photo unless asked — keep it optional.</p>
       </div>
       <div className="xl:sticky xl:top-24 h-fit">
-        <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">Live A4 preview</p>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Live A4 preview</p>
+          <p className="text-xs text-slate-500">{CV_TEMPLATES.find((t) => t.id === d.template)?.name}</p>
+        </div>
         <iframe title="CV preview" srcDoc={html} className="h-[760px] w-full rounded-2xl border border-white/12 bg-white shadow-2xl" />
       </div>
     </div>

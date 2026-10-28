@@ -6,10 +6,12 @@ import { Icon } from "@/components/icons";
 import {
   downloadBlob,
   downloadZip,
+  fitWithin,
   formatBytes,
   loadImage,
   loadScript,
   renderToBlob,
+  savedPct,
   stripExt,
   uid,
 } from "@/lib/utils";
@@ -873,6 +875,217 @@ export function ExifViewer() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/* ═════════════════════════ WEBP TO JPG / PNG ═════════════════════════
+   Bulk converter for Google's WebP format — the pictures you save from
+   modern websites. Handles transparency the honest way: JPG has no alpha, so
+   you choose the paper colour it lands on (or switch to PNG and keep it). */
+const BG_PRESETS = [
+  ["#ffffff", "White"],
+  ["#f1f5f9", "Light grey"],
+  ["#000000", "Black"],
+  ["#fde68a", "Cream"],
+];
+
+export function WebpToJpg() {
+  const [rows, setRows] = useState([]);
+  const [format, setFormat] = useState("image/jpeg");
+  const [quality, setQuality] = useState(92);
+  const [background, setBackground] = useState("#ffffff");
+  const [keepTransparent, setKeepTransparent] = useState(false);
+  const [maxDim, setMaxDim] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [zipping, setZipping] = useState(false);
+
+  const isPng = format === "image/png";
+  const ext = isPng ? "png" : "jpg";
+
+  const convert = useCallback(async (files) => {
+    const accepted = Array.from(files || []).filter(
+      (f) => /\.webp$/i.test(f.name) || f.type === "image/webp"
+    );
+    if (!accepted.length) {
+      setError("No WebP files in that selection. This tool converts .webp images — for other formats use the Image Converter.");
+      return;
+    }
+    setError("");
+    setBusy(true);
+    const id = uid();
+    setRows(() => accepted.map((file) => ({ id: `${id}-${file.name}-${file.size}`, file, name: file.name, size: file.size, status: "Converting…", result: null })));
+
+    const bg = isPng && keepTransparent ? null : background;
+    const done = [];
+    for (const file of accepted.slice(0, 50)) {
+      const rowId = `${id}-${file.name}-${file.size}`;
+      try {
+        const loaded = await loadImage(file);
+        const { width, height } = fitWithin(loaded.width, loaded.height, maxDim);
+        const blob = await renderToBlob(loaded.img, {
+          width,
+          height,
+          type: format,
+          quality: quality / 100,
+          background: bg,
+          fit: "stretch",
+        });
+        URL.revokeObjectURL(loaded.url);
+        const result = { blob, url: URL.createObjectURL(blob), name: `${stripExt(file.name)}.${ext}` };
+        done.push({ rowId, width, height, result });
+        setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, status: "done", width, height, result } : row)));
+      } catch (e) {
+        setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, status: e?.message || "Could not read this WebP file." } : row)));
+      }
+    }
+    if (accepted.length > 50) setError("Only the first 50 files were converted, to protect your device's memory.");
+    setBusy(false);
+    return done;
+  }, [background, ext, format, isPng, keepTransparent, maxDim, quality]);
+
+  const results = rows.filter((row) => row.result).map((row) => row.result);
+  const totalIn = rows.reduce((sum, row) => sum + (row.size || 0), 0);
+  const totalOut = results.reduce((sum, item) => sum + item.blob.size, 0);
+
+  return (
+    <div>
+      <div className="rounded-3xl border border-white/[0.08] bg-white/[0.02] p-5">
+        <div className="grid gap-5 md:grid-cols-3">
+          <div>
+            <label htmlFor="webp-format" className="text-sm font-semibold text-white">Convert to</label>
+            <select id="webp-format" value={format} onChange={(e) => setFormat(e.target.value)} className={selectCls}>
+              <option value="image/jpeg">JPG — opens everywhere ★</option>
+              <option value="image/png">PNG — lossless, keeps transparency</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="webp-quality" className="flex justify-between text-sm font-semibold text-white">
+              JPG quality <span className="font-bold text-amber-300">{quality}%</span>
+            </label>
+            <input id="webp-quality" type="range" min="50" max="100" value={quality} disabled={isPng} onChange={(e) => setQuality(Number(e.target.value))} className="mt-4 w-full disabled:opacity-40" />
+            <p className="mt-1 text-xs text-slate-500">{isPng ? "PNG is lossless — quality does not apply." : "88–94% looks identical to the original for photos."}</p>
+          </div>
+          <div>
+            <label htmlFor="webp-size" className="text-sm font-semibold text-white">Resize (optional)</label>
+            <select id="webp-size" value={maxDim} onChange={(e) => setMaxDim(Number(e.target.value))} className={selectCls}>
+              <option value={0}>Keep original size ★</option>
+              <option value={2560}>Max 2560 px long edge</option>
+              <option value={1920}>Max 1920 px — HD</option>
+              <option value={1280}>Max 1280 px — email friendly</option>
+              <option value={800}>Max 800 px — thumbnails</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-5 border-t border-white/[0.07] pt-4">
+          <p className="text-sm font-semibold text-white">Transparent areas become…</p>
+          {isPng ? (
+            <label className="mt-3 flex items-center gap-2 text-xs text-slate-300">
+              <input type="checkbox" checked={keepTransparent} onChange={(e) => setKeepTransparent(e.target.checked)} />
+              Keep transparency (PNG supports it) — untick to flatten onto the colour below
+            </label>
+          ) : (
+            <p className="mt-2 text-xs text-slate-500">JPG cannot store transparency, so empty areas are filled with the colour you pick.</p>
+          )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {BG_PRESETS.map(([value, title]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setBackground(value)}
+                disabled={isPng && keepTransparent}
+                aria-pressed={background === value}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition disabled:opacity-40 ${background === value ? "border-amber-400 bg-amber-400/10 text-white" : "border-white/10 bg-white/[0.03] text-slate-300 hover:border-white/25"}`}
+              >
+                <span className="h-3.5 w-3.5 rounded-full border border-white/25" style={{ background: value }} /> {title}
+              </button>
+            ))}
+            <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-bold text-slate-300">
+              Custom
+              <input type="color" value={background} disabled={isPng && keepTransparent} onChange={(e) => setBackground(e.target.value)} className="h-5 w-7 cursor-pointer rounded border-0 bg-transparent p-0 disabled:opacity-40" aria-label="Custom background colour" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <Dropzone
+          accept=".webp,image/webp"
+          multiple
+          compact={rows.length > 0}
+          onFiles={convert}
+          title={rows.length ? "Convert more WebP images" : "Drop your WebP images"}
+          hint="Bulk conversion — up to 50 files at once, they convert the moment you drop them"
+          icon="convert"
+        />
+      </div>
+      <Alert msg={error} />
+
+      {rows.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-300">
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">{rows.length} file{rows.length === 1 ? "" : "s"}</span>
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">In {formatBytes(totalIn)}</span>
+            <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">Out {formatBytes(totalOut)}</span>
+            {totalOut > 0 && <span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1.5 text-emerald-300">{savedPct(totalIn, totalOut)}% size change</span>}
+          </div>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <button type="button" onClick={() => convert(rows.map((row) => row.file))} disabled={busy} className={btnSmall}>
+              <Icon name="refresh" size={13} /> Re-run with these settings
+            </button>
+            {results.length > 1 && (
+              <button
+                type="button"
+                disabled={zipping || busy}
+                onClick={async () => { setZipping(true); await downloadZip(results, `toolsstars-webp-to-${ext}.zip`); setZipping(false); }}
+                className={btnGreen}
+              >
+                <Icon name="download" size={16} /> {zipping ? "Zipping…" : `Download all (${results.length}) as ZIP`}
+              </button>
+            )}
+            <button type="button" onClick={() => { setRows([]); setError(""); }} className={btnGhost}><Icon name="trash" size={15} /> Clear</button>
+          </div>
+        </div>
+      )}
+
+      {busy && <p className="mt-4 text-xs text-amber-300" role="status">Converting on your device…</p>}
+
+      <ul className="mt-5 space-y-3">
+        {rows.map((row) => (
+          <li key={row.id} className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-3.5">
+            <div className="flex flex-wrap items-center gap-3">
+              {row.result ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={row.result.url} alt={row.name} className="h-14 w-14 rounded-lg border border-white/10 object-cover" />
+              ) : (
+                <span className="grid h-14 w-14 place-items-center rounded-lg bg-white/[0.05] text-slate-500"><Icon name="image" size={20} /></span>
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold text-white" title={row.name}>{row.name}</span>
+                {row.status === "done" ? (
+                  <span className="text-xs text-slate-500">
+                    {row.width} × {row.height} px · {formatBytes(row.size)} → {formatBytes(row.result.blob.size)}
+                    {savedPct(row.size, row.result.blob.size) > 0 && <span className="text-emerald-300"> · {savedPct(row.size, row.result.blob.size)}% smaller</span>}
+                  </span>
+                ) : (
+                  <span className={`text-xs ${row.status === "Converting…" ? "text-amber-300" : "text-rose-300"}`}>{row.status}</span>
+                )}
+              </span>
+              {row.result && (
+                <button type="button" onClick={() => downloadBlob(row.result.blob, row.result.name)} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-2 text-sm font-bold text-emerald-300 transition hover:bg-emerald-400/15">
+                  <Icon name="download" size={15} /> {row.result.name}
+                </button>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-5 text-xs leading-relaxed text-slate-500">
+        Animated WebP files export as their first frame — browsers decode only the still image here. For animation, keep the original .webp file.
+      </p>
     </div>
   );
 }

@@ -12,7 +12,7 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | **Plain React (SPA)** | Google struggles to index client-only pages; poor SEO = no organic traffic. |
 | **Next.js (chosen ✅)** | Every page is pre-rendered as static HTML → perfect Google indexing, ~110 KB JS, loads in milliseconds, deploys free on Vercel/Cloudflare. Tools still run 100% client-side. Best of both worlds. |
 
-## 2. Tools included (44 — all fully working, no placeholders)
+## 2. Tools included (51 — all fully working, no placeholders)
 
 | Tool | URL | How it works |
 |---|---|---|
@@ -59,6 +59,13 @@ A complete, production-ready tools website (like Smallpdf / iLoveIMG style) wher
 | Favicon Generator | `/tools/favicon-generator` | 512px canvas master from image or text → hand-built multi-size ICO + PNGs + manifest + HTML in a ZIP |
 | Add Watermark to Image | `/tools/add-watermark-to-image` | Canvas text/logo watermark, 9 positions or tiled, bulk export as ZIP |
 | EXIF Viewer & Metadata Remover | `/tools/exif-viewer` | exifr (CDN) reads EXIF/GPS/XMP; clean copy is redrawn pixel-only and re-verified |
+| Sign PDF | `/tools/sign-pdf` | Draw/type/upload a signature, drag it onto a live PDF.js page preview, stamped with pdf-lib (handles /Rotate 90/180/270 so it stays upright) |
+| PDF to PNG | `/tools/pdf-to-png` | Same PDF.js engine as PDF to JPG, locked to lossless PNG — its own keyword landing page |
+| WebP to JPG | `/tools/webp-to-jpg` | Bulk canvas re-encode with a chosen fill colour for transparent areas (or PNG to keep them) |
+| Age Calculator | `/tools/age-calculator` | Calendar-accurate Y/M/D age, age on any date, days lived, birthday countdown, 18+ check |
+| Percentage Calculator | `/tools/percentage-calculator` | 5 modes in one: X% of Y, share-of, % change, marks→% + grade, percentage ⇄ CGPA |
+| GPA / CGPA Calculator | `/tools/gpa-calculator` | Credit-weighted semester GPA + cumulative CGPA, 4.00 scale with ±grades, % equivalent |
+| Zakat Calculator | `/tools/zakat-calculator` | Gold/silver by tola or gram, cash/savings/business stock minus debts, silver or gold nisab, 2.5% |
 
 **Homepage highlights:** animated SVG/CSS diagrams that visually explain video compression, AI background removal, image compression and the "no upload" privacy model · live tool search + category filters · comparison table · FAQ with schema.
 
@@ -89,7 +96,7 @@ Alternatives that also work free: **Cloudflare Pages** and **Netlify** (both aut
 2. **Bing Webmaster Tools** → import from Search Console (Bing/DuckDuckGo traffic is free extra).
 3. **Analytics:** add Google Analytics 4 or Plausible by pasting their script in `app/layout.js`.
 4. **AdSense:** once approved, paste the AdSense script in `app/layout.js` and ad units in `components/ToolShell.js` (below the tool is the best-converting spot) — keep ads off the tool workspace itself so users stay happy.
-5. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates: Sign PDF, dedicated PDF to PNG / WebP to JPG landing pages, Age / Percentage / GPA / Zakat calculators, and country-specific passport-photo pages.
+5. **Content growth:** the money pages are individual tool pages targeting "compress X online free". Each new tool = a new keyword landing page (see §6). Strong next candidates: Protect/Unlock PDF, PDF to Word-style layouts, dedicated WebP to PNG and JPG to WebP pages, more Pakistani calculators (salary/income tax, EMI/loan, BMI, electricity bill), date-of-joining to service-length calculators, and country-specific passport-photo pages.
 6. Share each tool page (not just the homepage) on Reddit/Pinterest/WhatsApp groups — tool pages convert, homepages bounce.
 
 ## 6. Add a new tool (5 minutes)
@@ -111,7 +118,7 @@ components/
   diagrams.js         The animated homepage diagrams (pure CSS/SVG, 0 JS)
   ToolShell.js        SEO layout shared by every tool page
   Dropzone.js         Drag-drop / paste upload box
-  tools/              Tool engines grouped by pack (pdfTools, pdfEssentials, growthTools, pakistanPack2, videoPack, audioPack, quickTools, imageDevPack…); heavy libraries load lazily per page
+  tools/              Tool engines grouped by pack (pdfTools, pdfEssentials, growthTools, pakistanPack2, videoPack, audioPack, quickTools, imageDevPack, calcPack + standalone SignPdf…); heavy libraries load lazily per page
 lib/
   tools.js            Tool catalog (single source of truth)
   site.js             Domain & site constants  ← change your domain here / via env
@@ -126,6 +133,9 @@ lib/
 - **Compress PDF to Exact KB** rebuilds pages as optimized images (text no longer selectable) and is capped at 30 pages to protect phone memory; if the original already fits the target it is returned unchanged.
 - **PDF to Text** only reads text that is already stored in a digital PDF — scanned/photo PDFs need the OCR path (PDF to JPG → Image to Text).
 - **Voice Recorder** needs microphone permission over HTTPS and saves in the browser's native format (WebM on Chrome, M4A on Safari); the built-in converter makes an MP3 copy on request.
+- **Sign PDF** creates an *electronic* signature (your signature image placed into the PDF), not a certified *digital* signature with a cryptographic certificate. That is fine for forms, contracts and approvals, but banks, courts and some government portals demand the certified kind, which only an authorised certificate provider can issue. Animated WebP files convert as their first frame only.
+- **Zakat Calculator** is arithmetic, not a fatwa. It uses the widely accepted 2.5% rate and standard nisab weights (612.36 g silver / 87.48 g gold), but rulings differ between schools of thought on jewellery, produce, resale property and provident funds — the page says so plainly.
+- **GPA / Percentage** calculators follow the common 4.00 scale and the ÷9.5 CGPA rule; universities publish their own conversion tables, so official documents should use the institution's rule.
 - Huge files are limited only by the visitor's device memory — there are no server-imposed caps because there is no server processing at all.
 
 ## 9. Costs when traffic grows

@@ -297,7 +297,7 @@ function ocrPreprocessPixels(data, w, h, opts = {}) {
   const smallerPeak = Math.min(mass(p1 - 8, p1 + 8), mass(p2 - 8, p2 + 8));
   const valley = smallerPeak > 0 ? 1 - inner / smallerPeak : 0;
   const bimodal = valley > 0.7 && mass(p1 - 8, p1 + 8) >= n * 0.05 && mass(p2 - 8, p2 + 8) >= n * 0.05;
-  const binarize = mode === "doc" || (mode === "auto" && bimodal);
+  const binarize = mode === "doc" || mode === "nums" || (mode === "auto" && bimodal);
   if (binarize) {
     for (let p = 0, i = 0; p < n; p++, i += 4) {
       const v = soft[p] > threshold ? 255 : 0;
@@ -341,6 +341,46 @@ function ocrCleanText(data, opts = {}) {
   return { text: out.join("\n"), hidden };
 }
 
+/* ── Pure handwriting/numbers helpers (no DOM — pinned by tests) ──────────
+   Handwritten codes confuse the engine in predictable ways: O for 0, l for
+   1, s for 5, b for 6, q for 9. In "numbers / codes" mode we repair tokens
+   that are already mostly digits (ratio > 0.6, so "10TH" and "S/O" stay
+   untouched), map the classic confusions, and drop stray letters inside a
+   digit run. Selection rects are stored as fractions of the ORIGINAL image,
+   so they must be rotated with the canvas before cropping; and a wide, short
+   strip is a single line, which PSM 7 reads far better than full-page auto. */
+function ocrFixDigits(text) {
+  const MAP = { O: "0", o: "0", D: "0", Q: "0", l: "1", I: "1", i: "1", "|": "1", Z: "2", z: "2", S: "5", s: "5", B: "8", b: "6", G: "6", q: "9", g: "9" };
+  return String(text).split("\n").map((line) =>
+    line.split(/\s+/).map((tok) => {
+      if (!tok) return tok;
+      const core = tok.replace(/[^\p{L}\p{N}]/gu, "");
+      if (!core) return tok;
+      const digits = (core.match(/\p{N}/gu) || []).length;
+      if (digits / core.length <= 0.6) return tok;
+      let out = "";
+      for (const ch of tok) {
+        if (/\p{N}/u.test(ch) || ch === "-" || ch === "/" || ch === ".") out += ch;
+        else if (MAP[ch]) out += MAP[ch];
+      }
+      return out;
+    }).join(" ")
+  ).join("\n");
+}
+
+function ocrRotateRect(rect, rot) {
+  const r = ((rot % 360) + 360) % 360;
+  const { x, y, w, h } = rect;
+  if (r === 90) return { x: 1 - y - h, y: x, w: h, h: w };
+  if (r === 180) return { x: 1 - x - w, y: 1 - y - h, w, h };
+  if (r === 270) return { x: y, y: 1 - x - w, w: h, h: w };
+  return { x, y, w, h };
+}
+
+function ocrRectPsm(rect, fallback) {
+  return rect && rect.h > 0 && rect.w / rect.h >= 3 ? "7" : fallback;
+}
+
 export function ImageToText() {
   const [item, setItem] = useState(null);
   const [lang, setLang] = useState("eng");
@@ -349,6 +389,8 @@ export function ImageToText() {
   const [layout, setLayout] = useState("3");
   const [rot, setRot] = useState(0);
   const [confidence, setConfidence] = useState(null);
+  const [rect, setRect] = useState(null);
+  const [rectOnly, setRectOnly] = useState(true);
   const [clean, setClean] = useState(true);
   const [minConf, setMinConf] = useState(65);
   const [hidden, setHidden] = useState(null);
@@ -358,6 +400,18 @@ export function ImageToText() {
   const [text, setText] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+
+  const prevRef = useRef(null);
+  const dragRef = useRef(null);
+
+  useEffect(() => {
+    const c = prevRef.current;
+    if (!c || !item) return;
+    const w = Math.min(1400, item.width);
+    const h = Math.round((w * item.height) / item.width);
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(item.img, 0, 0, w, h);
+  }, [item]);
 
   const add = useCallback(async (files) => { setError(""); setText(""); try { setItem({ file: files[0], ...(await loadImage(files[0])) }); } catch (e) { setError(friendlyError(e, "Could not read that image. Try a different file.")); } }, []);
 
@@ -401,7 +455,22 @@ export function ImageToText() {
         pre = ocrPreprocessPixels(frame.data, canvas.width, canvas.height, { mode: scanMode });
         x.putImageData(new ImageData(pre.data, canvas.width, canvas.height), 0, 0);
       }
-      const input = canvas;
+      // Area select: crop the chosen strip (rotated with the canvas) so
+      // signatures, stamps and borders never reach the engine at all.
+      let input = canvas;
+      let psm = layout;
+      if (rectOnly && rect) {
+        const rr = ocrRotateRect(rect, rot);
+        const sx = Math.max(0, Math.min(canvas.width - 8, Math.round(rr.x * canvas.width)));
+        const sy = Math.max(0, Math.min(canvas.height - 8, Math.round(rr.y * canvas.height)));
+        const sw = Math.max(8, Math.min(canvas.width - sx, Math.round(rr.w * canvas.width)));
+        const sh = Math.max(8, Math.min(canvas.height - sy, Math.round(rr.h * canvas.height)));
+        const crop = document.createElement("canvas");
+        crop.width = sw; crop.height = sh;
+        crop.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        input = crop;
+        psm = ocrRectPsm(rr, layout);
+      }
 
       const worker = await window.Tesseract.createWorker(lang, 1, {
         logger: (m) => {
@@ -412,7 +481,8 @@ export function ImageToText() {
       // Layout hint + real spaces between words: both move accuracy a lot.
       await worker.setParameters({
         preserve_interword_spaces: "1",
-        tessedit_pageseg_mode: layout,
+        tessedit_pageseg_mode: psm,
+        ...(scanMode === "nums" ? { tessedit_char_whitelist: "0123456789-/. " } : {}),
       });
       const { data } = await worker.recognize(input);
       await worker.terminate();
@@ -420,11 +490,12 @@ export function ImageToText() {
       if (!data.text.trim()) throw new Error("No readable text found. Try a sharper, straight, well-lit photo of the document — or rotate it upright above.");
       setConfidence(Math.round(data.confidence));
       const cleaned = ocrCleanText(data, { minConf });
+      const fix = (t) => (scanMode === "nums" ? ocrFixDigits(t) : t);
       if (clean && cleaned.text.trim()) {
-        setText(cleaned.text);
+        setText(fix(cleaned.text));
         setHidden(cleaned.hidden);
       } else {
-        setText(data.text.trim());
+        setText(fix(data.text.trim()));
         setHidden(clean ? cleaned.hidden : 0);
       }
       setStage(`Done${pre ? (pre.binarized ? " — scan was binarised for ink-on-paper reading" : " — scan enhanced (grayscale + contrast)") : ""}. Edit anything below, then copy or download.`);
@@ -444,8 +515,43 @@ export function ImageToText() {
       {item && (
         <div className="grid gap-6 lg:grid-cols-2">
           <div>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={item.url} alt="Document to read" className="max-h-[480px] w-full rounded-2xl border border-white/10 bg-white object-contain" />
+            <div className="relative">
+              <canvas
+                ref={prevRef}
+                className="w-full touch-none select-none rounded-2xl border border-white/10 bg-white"
+                onPointerDown={(e) => {
+                  if (busy) return;
+                  const b = e.currentTarget.getBoundingClientRect();
+                  dragRef.current = { x: (e.clientX - b.left) / b.width, y: (e.clientY - b.top) / b.height };
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  if (!dragRef.current || busy) return;
+                  const b = e.currentTarget.getBoundingClientRect();
+                  const cx = Math.min(1, Math.max(0, (e.clientX - b.left) / b.width));
+                  const cy = Math.min(1, Math.max(0, (e.clientY - b.top) / b.height));
+                  const a = dragRef.current;
+                  setRect({ x: Math.min(a.x, cx), y: Math.min(a.y, cy), w: Math.abs(cx - a.x), h: Math.abs(cy - a.y) });
+                }}
+                onPointerUp={() => {
+                  dragRef.current = null;
+                  setRect((r) => (r && (r.w < 0.02 || r.h < 0.02) ? null : r));
+                }}
+              />
+              {rect && (
+                <div className="pointer-events-none absolute border-2 border-cyan-400 bg-cyan-400/10" style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.w * 100}%`, height: `${rect.h * 100}%` }}>
+                  <span className="absolute -top-5 left-0 rounded bg-cyan-400 px-1.5 py-0.5 text-[10px] font-bold text-slate-900">selected area</span>
+                </div>
+              )}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                <input type="checkbox" checked={rectOnly} onChange={(e) => setRectOnly(e.target.checked)} disabled={busy || !rect} className="h-4 w-4" />
+                Read only the selected area
+              </label>
+              <button type="button" onClick={() => setRect(null)} disabled={busy || !rect} className="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] font-bold text-slate-300 transition hover:border-cyan-400/40 disabled:opacity-40">Clear selection</button>
+              <span className="text-[11px] text-slate-500">— drag on the scan to skip signatures, stamps & borders</span>
+            </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div><label className="text-sm font-semibold text-white">Document language</label>
                 <select value={lang} onChange={(e) => setLang(e.target.value)} className={sel}>
@@ -453,7 +559,7 @@ export function ImageToText() {
                 </select></div>
               <div className="flex items-end gap-2">
                 <button onClick={run} disabled={busy} className={btnP}><Icon name="type" size={16} /> {busy ? "Reading…" : "Extract text"}</button>
-                <button onClick={() => { setItem(null); setText(""); setRot(0); setConfidence(null); }} className={btnGhost}><Icon name="trash" size={15} /> New</button>
+                <button onClick={() => { setItem(null); setText(""); setRot(0); setConfidence(null); setRect(null); setHidden(null); }} className={btnGhost}><Icon name="trash" size={15} /> New</button>
               </div>
             </div>
 
@@ -472,6 +578,7 @@ export function ImageToText() {
                     <option value="auto">Auto-detect (ink vs photo)</option>
                     <option value="doc">Printed document (binarise)</option>
                     <option value="photo">Photo / screen (keep greys)</option>
+                    <option value="nums">Handwriting / numbers (CNIC, forms)</option>
                   </select></div>
                 <div><label className="text-sm font-semibold text-white">Page layout</label>
                   <select value={layout} onChange={(e) => setLayout(e.target.value)} disabled={busy} className={sel}>
@@ -510,6 +617,9 @@ export function ImageToText() {
                 first, because OCR reads 30px text far better than 10px text. Auto-clean then drops the words the
                 engine read from corner flourishes, dividers and icons (they score low confidence), keeping real
                 connectors like & and / — so cards and posters come out as clean text.
+                For handwriting, pick the Handwriting / numbers scan type and drag a box around
+                the line you need: signatures and stamps stay outside the box, and common
+                digit mix-ups (O→0, l→1, s→5, b→6, q→9) are repaired in the result.
               </p>
             </div>
             {(busy || stage) && <div className="mt-4" role="status">{pct != null && <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-cyan-400 transition-all" style={{ width: `${pct}%` }} /></div>}<p className="mt-2 text-xs capitalize text-slate-400">{stage}</p></div>}

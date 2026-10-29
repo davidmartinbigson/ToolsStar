@@ -104,7 +104,7 @@ export async function compressLadder() {
 export async function ocrPure() {
   const rel = "components/tools/quickTools.js";
   const code = slice(rel, "function ocrHistogram(data, n) {", "export function ImageToText() {");
-  return importSource(code, ["ocrHistogram", "otsuThreshold", "ocrPreprocessPixels"]);
+  return importSource(code, ["ocrHistogram", "otsuThreshold", "ocrPreprocessPixels", "ocrCleanText"]);
 }
 
 export async function utils() {

@@ -751,19 +751,26 @@ const card = {
   ],
 };
 const cleanedCard = ocr.ocrCleanText(card, { minConf: 65 });
-ck("clean text keeps the confident real words", cleanedCard.text === "IN THE NAME\nVENUE & TIME\nKARACHI", JSON.stringify(cleanedCard.text));
+ck("clean text keeps the confident real words", cleanedCard.text === "IN THE NAME\nVENUE & TIME\nAlishba Sajid\nKARACHI", JSON.stringify(cleanedCard.text));
 ck("divider / icon lines disappear entirely", !cleanedCard.text.includes("❖") && !cleanedCard.text.includes("®"));
-ck("hidden count reports what was dropped", cleanedCard.hidden === 5, String(cleanedCard.hidden));
+ck("hidden count reports what was dropped", cleanedCard.hidden === 3, String(cleanedCard.hidden));
 ck("real connectors survive the symbol filter", cleanedCard.text.includes("&"));
+ck("THE BUG: low-confidence real names are never cut", cleanedCard.text.includes("Alishba Sajid"));
+ck("hidden list names exactly what was cut", JSON.stringify(cleanedCard.hiddenWords) === JSON.stringify(["❖", "───", "®"]), JSON.stringify(cleanedCard.hiddenWords));
+const frag = ocr.ocrCleanText({ lines: [{ words: [{ text: "ce", confidence: 30 }, { text: "Shayan", confidence: 30 }, { text: "Maham", confidence: 25 }] }] }, { minConf: 50 });
+ck("non-word fragments cut, short-confidence names kept", frag.text === "Shayan Maham" && frag.hidden === 1, JSON.stringify(frag));
+ck("digit tokens count as plausible too", ocr.ocrCleanText({ lines: [{ words: [{ text: "42101", confidence: 20 }] }] }, { minConf: 50 }).text === "42101");
 const rawish = ocr.ocrCleanText(card, { minConf: 0, dropSymbols: false });
 ck("raw mode keeps everything", rawish.hidden === 0 && rawish.text.split("\n").length === 6, String(rawish.text.split("\n").length));
 const strict = ocr.ocrCleanText(card, { minConf: 90 });
-ck("raising the bar hides more", strict.hidden > cleanedCard.hidden, `${strict.hidden} vs ${cleanedCard.hidden}`);
+ck("raising the bar hides more non-plausible tokens", strict.hidden > cleanedCard.hidden, `${strict.hidden} vs ${cleanedCard.hidden}`);
 ck("empty or malformed data is safe", ocr.ocrCleanText(null, {}).text === "" && ocr.ocrCleanText({ lines: [{}] }, {}).text === "");
 ck("unicode letters and digits count as real text", ocr.ocrCleanText({ lines: [{ words: [{ text: "اردو", confidence: 90 }, { text: "10TH", confidence: 90 }] }] }, {}).text === "اردو 10TH");
 const cleanSrc = src("components/tools/quickTools.js");
-ck("auto-clean toggle + confidence slider wired", cleanSrc.includes("Auto-clean: ignore icons, borders & decoration glyphs") && cleanSrc.includes("Hide words below confidence"));
+ck("auto-clean toggle + confidence slider wired", cleanSrc.includes("Auto-clean: ignore icons, borders & decoration glyphs") && cleanSrc.includes("Hide non-word fragments below confidence"));
 ck("result note says how much was hidden", cleanSrc.includes("decoration/low-confidence word"));
+ck("hidden words are listable, nothing vanishes silently", cleanSrc.includes("hidden word") && cleanSrc.includes("show what was cut") && cleanSrc.includes("hiddenWords.join"));
+ck("default confidence bar lowered to 50", cleanSrc.includes("const [minConf, setMinConf] = useState(50)"));
 ck("centred-card layout hint exists", cleanSrc.includes("Single column / centred card"));
 
 /* ═════════ 31. Handwriting & numbers: digit repair, area select ════════

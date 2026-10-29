@@ -512,6 +512,21 @@ for (const t of TOOLS) {
 }
 console.log(`   thinnest tool page copy now: ${thinnest[0]} (${thinnest[1]} words)`);
 
+/* ═════════ 22. Header layout guards — the bar must never crowd ═════════
+   With six nav links the header used to shrink-wrap: labels and even the
+   Explore button folded onto two lines. Guards: every nav label is nowrap,
+   links stagger in by breakpoint (md → essentials, lg → busy tools,
+   xl → long labels), and the mobile menu still lists everything.        */
+
+console.log("\n22. Header layout guards");
+const headerSrc = src("components/Header.js");
+ck("nav labels cannot wrap (whitespace-nowrap)", (headerSrc.match(/whitespace-nowrap/g) || []).length >= 3, String((headerSrc.match(/whitespace-nowrap/g) || []).length));
+ck("links stagger: two join at lg", headerSrc.includes("hidden lg:inline-block"));
+ck("links stagger: two join at xl", headerSrc.includes("hidden xl:inline-block"));
+ck("all six nav destinations kept", ["/tools", "/blog", "/tools/image-compressor", "/tools/video-compressor", "/tools/background-remover", "/tools/image-to-pdf"].every((h) => headerSrc.includes(`href: "${h}"`)));
+ck("mobile menu still lists every link", headerSrc.includes('aria-label="Mobile"') && headerSrc.includes("LINKS.map"));
+ck("Explore button cannot shrink-wrap", headerSrc.includes("whitespace-nowrap shrink-0 items-center gap-1.5 rounded-xl bg-amber-400"));
+
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 
 const total = pass + fails.length;

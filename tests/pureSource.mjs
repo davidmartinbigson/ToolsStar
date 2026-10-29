@@ -83,6 +83,24 @@ export async function pngLogic() {
   return importSource(code, ["PAKO_SRCS", "UPNG_SRCS", "pngColorsForQuality", "countColours", "noSavingsNote"]);
 }
 
+export async function enhancePure() {
+  const rel = "components/tools/ImageEnhancer.js";
+  const code = slice(rel, "function boxBlur(src, w, h, r) {", "export default function ImageEnhancer()");
+  return importSource(code, ["boxBlur", "enhancePixels"]);
+}
+
+export async function alphaPure() {
+  const rel = "components/tools/BackgroundRemover.js";
+  const code = slice(rel, "function refineAlpha(src, w, h", "export default function BackgroundRemover()");
+  return importSource(code, ["refineAlpha"]);
+}
+
+export async function compressLadder() {
+  const rel = "components/tools/ImageCompressor.js";
+  const code = slice(rel, "function shrinkLadder(type, quality) {", "function drawImageCanvas(");
+  return importSource(code, ["shrinkLadder"]);
+}
+
 export async function utils() {
   // lib/utils.js is already plain ESM with no imports (browser APIs are only
   // touched inside function bodies), so it can be imported as-is.

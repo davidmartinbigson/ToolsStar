@@ -8,7 +8,7 @@
 // covered — they need a real browser.
 
 import { existsSync, readFileSync } from "node:fs";
-import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, src } from "./pureSource.mjs";
+import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, enhancePure, alphaPure, compressLadder, src } from "./pureSource.mjs";
 
 let pass = 0;
 const fails = [];
@@ -553,6 +553,105 @@ ck("google-facing sizes are multiples of 48", [96, 192].every((n) => n % 48 === 
 ck("layout wires every favicon url", ["/favicon.ico", "/favicon-96.png", "/favicon-192.png", "/apple-touch-icon.png"].every((u) => layoutSrc.includes(`url: "${u}"`)));
 ck("no data: URI favicon (uncrawlable by Google)", !layoutSrc.includes("data:image/svg+xml"));
 ck("robots.txt leaves icons crawlable", src("app/robots.js").includes('allow: "/"'));
+
+/* ═════════ 24. CV builder — photo alignment + uncut preview ═════════════
+   Two user-reported bugs: sidebar templates hard-centred the photo with no
+   way to move it, and the live A4 preview clipped the page's right side on
+   narrow viewports (the 210mm page was never scaled to the iframe).      */
+
+console.log("\n24. CV builder — photo alignment + preview scaling");
+const cvSrc = src("components/tools/growthTools.js");
+ck("photo carries an alignment class", cvSrc.includes("al-${d.photoAlign || \"center\"}"));
+ck("all three alignment rules exist in the CV stylesheet", [".photo.al-left{", ".photo.al-center{", ".photo.al-right{"].every((c) => cvSrc.includes(c)));
+ck("alignment overrides beat every template rule", (cvSrc.match(/\.photo\.al-(left|center|right)\{[^}]*!important/g) || []).length >= 3);
+ck("Align control offers Left / Center / Right", cvSrc.includes('const PHOTO_ALIGNS = [["left", "Left"], ["center", "Center"], ["right", "Right"]];'));
+ck("both presets carry photoAlign", (cvSrc.match(/photoAlign: "center",/g) || []).length === 2);
+ck("preview wraps the page in a fitted scaler", cvSrc.includes('id="cvscaler"') && cvSrc.includes("transform-origin:top left"));
+ck("scaler fits the iframe width and restores scroll height", cvSrc.includes("Math.min(1,vw/pw)") && cvSrc.includes("document.body.style.height=(el.scrollHeight*s)+'px'"));
+ck("print + HTML download stay unscaled (pagination-safe)", cvSrc.includes("resumeHtml(d, true)") && cvSrc.includes("resumeHtml(d, false)") && cvSrc.includes("resumeHtml(d, false, true)"));
+
+/* ═════════ 25. Compressors — a converted file may never come back heavier ═
+   "2 MB JPG in, 5 MB PNG out" is now structurally impossible: cross-format
+   results walk shrinkLadder() until they beat the source, and if nothing
+   can (tiny already-optimal files) the original is kept with an honest note. */
+
+console.log("\n25. Compressor never-heavier guards");
+const ladder = await compressLadder();
+const pngL = ladder.shrinkLadder("image/png", 80);
+const jpgL = ladder.shrinkLadder("image/jpeg", 80);
+ck("png ladder walks the palette down", eq(pngL.map((x) => x.colors), [128, 64, 32, 16]));
+ck("jpeg ladder starts below the chosen quality", jpgL[0].quality === 65, String(jpgL[0].quality));
+ck("ladders are strictly descending", [pngL.map((x) => x.colors), jpgL.map((x) => x.quality)].every((a) => a.every((v, i) => i === 0 || v < a[i - 1])));
+ck("jpeg ladder never drops under 30", jpgL.every((x) => x.quality >= 30));
+ck("low quality input still yields a sane ladder", eq(ladder.shrinkLadder("image/jpeg", 40).map((x) => x.quality), [60, 45, 32, 30]));
+const compSrc = src("components/tools/ImageCompressor.js");
+ck("cross-format guard wired before the result returns", compSrc.includes("blob.size >= item.file.size && type !== item.file.type"));
+ck("final guard keeps the original instead of a heavier copy", compSrc.includes("if (blob.size >= item.file.size) {"));
+ck("kept files are labelled honestly in the UI", compSrc.includes("original kept"));
+ck("auto-tune notes explain what changed", compSrc.includes("Auto-tuned to a ${step.colors}-colour palette") && compSrc.includes("Auto-tuned quality to ${step.quality}%"));
+
+/* ═════════ 26. Enhancer — real restoration maths, not just upscaling ═════
+   The old "denoise" overlaid a blurred copy (i.e. blurred the picture).
+   enhancePixels is now an edge-preserving pipeline: flat-region denoise,
+   large-radius clarity, 1px unsharp, vibrance. Pinned on synthetic pixels. */
+
+console.log("\n26. Enhancer restoration pipeline");
+const enh = await enhancePure();
+const rgba = (w, h, fn) => { const d = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const [r, g, b, a] = fn(x, y); d[(y * w + x) * 4] = r; d[(y * w + x) * 4 + 1] = g; d[(y * w + x) * 4 + 2] = b; d[(y * w + x) * 4 + 3] = a; } return d; };
+const spread = (d) => { const vals = []; for (let i = 0; i < d.length; i += 4) vals.push(d[i]); const m = vals.reduce((a, b) => a + b, 0) / vals.length; return Math.sqrt(vals.reduce((a, b) => a + (b - m) ** 2, 0) / vals.length); };
+const noisy = rgba(24, 24, (x, y) => [128 + (((x + y) % 2) ? 8 : -8), 128 + (((x + y) % 2) ? 8 : -8), 128, 255]);
+const denoised = enh.enhancePixels(noisy, 24, 24, { denoise: 100 });
+ck("denoise collapses flat-region noise", spread(denoised) < spread(noisy) * 0.5, `${spread(denoised).toFixed(1)} vs ${spread(noisy).toFixed(1)}`);
+const edge = rgba(24, 24, (x) => [x < 12 ? 0 : 255, x < 12 ? 0 : 255, x < 12 ? 0 : 255, 255]);
+const edgeAfter = enh.enhancePixels(edge, 24, 24, { denoise: 100 });
+ck("denoise leaves hard edges untouched", edgeAfter[(10 * 24 + 11) * 4] === 0 && edgeAfter[(10 * 24 + 12) * 4] === 255);
+const softEdge = rgba(24, 24, (x) => { const v = x < 9 ? 100 : x > 14 ? 150 : 100 + (x - 9) * 10; return [v, v, v, 255]; });
+const sharpened = enh.enhancePixels(softEdge, 24, 24, { sharpen: 100, clarity: 100 });
+const energy = (d) => { let e = 0; for (let x = 1; x < 24; x++) e += Math.abs(d[(12 * 24 + x) * 4] - d[(12 * 24 + x - 1) * 4]); return e; };
+const gradBefore = energy(softEdge);
+const gradAfter = energy(sharpened);
+ck("clarity+sharpen raise local contrast (deblur feel)", gradAfter > gradBefore, `${gradAfter} vs ${gradBefore}`);
+const muted = rgba(4, 4, () => [160, 150, 140, 255]);
+const vib = enh.enhancePixels(muted, 4, 4, { vibrance: 100 });
+const sat = (d, i) => { const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]); return mx === 0 ? 0 : (mx - mn) / mx; };
+ck("vibrance wakes muted colours", sat(vib, 0) > sat(muted, 0), `${sat(vib, 0).toFixed(2)} vs ${sat(muted, 0).toFixed(2)}`);
+const vivid = rgba(4, 4, () => [255, 0, 0, 255]);
+const vividAfter = enh.enhancePixels(vivid, 4, 4, { vibrance: 100 });
+ck("vibrance leaves saturated colours alone", vividAfter[0] === 255 && vividAfter[1] === 0 && vividAfter[2] === 0);
+const flat = rgba(8, 8, () => [90, 90, 90, 255]);
+const blurred = enh.boxBlur(flat, 8, 8, 2);
+ck("boxBlur keeps a flat field flat", blurred[0] === 90 && blurred[(8 * 8 - 1) * 4] === 90 && blurred[3] === 255);
+ck("alpha channel survives the pipeline", enh.enhancePixels(noisy, 24, 24, { denoise: 50, clarity: 50, sharpen: 50, vibrance: 50 })[3] === 255);
+ck("enhancer UI exposes the clarity slider", src("components/tools/ImageEnhancer.js").includes("Clarity (deblur-style local contrast)"));
+ck("old blur-overlay fake denoise is gone", !src("components/tools/ImageEnhancer.js").includes('ctx.filter = "blur(1.2px)"'));
+
+/* ═════════ 27. Background remover — matte cleanup maths ════════════════
+   Leftover haze and stray patches were the complaint. refineAlpha cleans
+   the alpha channel only: soft threshold, despeckle by connected components
+   on a 4x4 grid, then an edge feather. Pinned on synthetic mattes.        */
+
+console.log("\n27. Background-remover matte cleanup");
+const bg = await alphaPure();
+const matte = (w, h, fn) => rgba(w, h, (x, y) => [200, 100, 50, fn(x, y)]);
+const hazyM = matte(8, 8, () => 30);
+const clearedM = bg.refineAlpha(hazyM, 8, 8, { strict: 35 });
+ck("strictness deletes faint background haze", clearedM[3] === 0);
+const solidM = matte(8, 8, () => 200);
+ck("solid subject alpha survives strictness", bg.refineAlpha(solidM, 8, 8, { strict: 35 })[3] === 255);
+const midM = matte(8, 8, () => 80);
+const midvM = bg.refineAlpha(midM, 8, 8, { strict: 35 })[3];
+ck("semi-transparent edge alpha is remapped, not deleted", midvM > 0 && midvM < 255, String(midvM));
+const speckedM = matte(64, 64, (x, y) => (x < 40 && y < 40 ? 255 : x >= 56 && y >= 56 && x < 60 && y < 60 ? 255 : 0));
+const cleanedM = bg.refineAlpha(speckedM, 64, 64, { strict: 0, soften: 0, despeckle: true });
+ck("despeckle deletes isolated leftover patches", cleanedM[(58 * 64 + 58) * 4 + 3] === 0);
+ck("despeckle keeps the main subject", cleanedM[(10 * 64 + 10) * 4 + 3] === 255);
+const keptM = bg.refineAlpha(speckedM, 64, 64, { despeckle: false });
+ck("despeckle off leaves the matte alone", keptM[(58 * 64 + 58) * 4 + 3] === 255);
+const stepM = matte(16, 16, (x) => (x < 8 ? 0 : 255));
+const featheredM = bg.refineAlpha(stepM, 16, 16, { soften: 100 });
+ck("softening feathers the matte edge", featheredM[(8 * 16 + 8) * 4 + 3] < 255 && featheredM[(8 * 16 + 8) * 4 + 3] > 0);
+ck("refine never touches RGB", cleanedM[0] === 200 && cleanedM[1] === 100 && cleanedM[2] === 50);
+ck("matte cleanup panel is wired in the UI", src("components/tools/BackgroundRemover.js").includes("Leftover strictness") && src("components/tools/BackgroundRemover.js").includes("Remove stray leftover patches (despeckle)"));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

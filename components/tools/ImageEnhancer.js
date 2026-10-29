@@ -41,34 +41,6 @@ function stepUpscale(img, w, h, tw, th) {
   return current;
 }
 
-function sharpenCanvas(canvas, amountPct) {
-  const a = (amountPct / 100) * 0.65;
-  if (a <= 0) return canvas;
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  const w = canvas.width;
-  const h = canvas.height;
-  const src = ctx.getImageData(0, 0, w, h);
-  const out = ctx.createImageData(w, h);
-  const s = src.data;
-  const o = out.data;
-  o.set(s);
-  const center = 1 + 4 * a;
-  for (let y = 1; y < h - 1; y++) {
-    const row = y * w;
-    for (let x = 1; x < w - 1; x++) {
-      const i = (row + x) * 4;
-      const up = i - w * 4;
-      const dn = i + w * 4;
-      for (let c = 0; c < 3; c++) {
-        const v = s[i + c] * center - a * (s[up + c] + s[dn + c] + s[i - 4 + c] + s[i + 4 + c]);
-        o[i + c] = v < 0 ? 0 : v > 255 ? 255 : v;
-      }
-    }
-  }
-  ctx.putImageData(out, 0, 0);
-  return canvas;
-}
-
 async function loadAiUpscaler(scale) {
   const attempts = [
     {
@@ -98,12 +70,111 @@ async function loadAiUpscaler(scale) {
   throw lastErr || new Error("AI engine could not be loaded");
 }
 
+/* ── Pure restoration pipeline (no DOM — pinned by tests) ─────────────────
+   boxBlur: separable sliding-window blur, the workhorse behind both the
+   local-contrast ("clarity") pass and the unsharp detail pass.
+   enhancePixels: edge-safe denoise → clarity → unsharp → vibrance. This is
+   what turns "just made it bigger" into a real clarity recovery.        */
+function boxBlur(src, w, h, r) {
+  if (r < 1) return src;
+  const tmp = new Uint8ClampedArray(src);
+  const out = new Uint8ClampedArray(src);
+  const div = r * 2 + 1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let ch = 0; ch < 3; ch++) {
+      let acc = 0;
+      for (let x = -r; x <= r; x++) acc += src[row + Math.min(w - 1, Math.max(0, x)) * 4 + ch];
+      for (let x = 0; x < w; x++) {
+        tmp[row + x * 4 + ch] = acc / div;
+        acc += src[row + Math.min(w - 1, x + r + 1) * 4 + ch] - src[row + Math.max(0, x - r) * 4 + ch];
+      }
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    for (let ch = 0; ch < 3; ch++) {
+      let acc = 0;
+      for (let y = -r; y <= r; y++) acc += tmp[(Math.min(h - 1, Math.max(0, y)) * w + x) * 4 + ch];
+      for (let y = 0; y < h; y++) {
+        out[(y * w + x) * 4 + ch] = acc / div;
+        acc += tmp[(Math.min(h - 1, y + r + 1) * w + x) * 4 + ch] - tmp[(Math.max(0, y - r) * w + x) * 4 + ch];
+      }
+    }
+  }
+  return out;
+}
+
+function enhancePixels(src, w, h, opts = {}) {
+  const { denoise = 0, clarity = 0, sharpen = 0, vibrance = 0 } = opts;
+  const s = new Uint8ClampedArray(src);
+  const lum = (k) => 0.299 * s[k] + 0.587 * s[k + 1] + 0.114 * s[k + 2];
+
+  // 1) Edge-preserving denoise: flat regions (skin, sky, walls) relax toward a
+  //    5-tap average while pixels sitting on an edge are left untouched, so
+  //    JPEG block noise and sensor speckle fade without smearing real detail.
+  if (denoise > 0) {
+    const t = (denoise / 100) * 0.85;
+    const L = (k) => 0.299 * s[k] + 0.587 * s[k + 1] + 0.114 * s[k + 2];
+    // Two passes: the first relaxes speckle, the second (re-measuring the now
+    // gentler gradient) finishes the job. sqrt keeps the curve effective on
+    // low-contrast noise while g >= 90 still protects real edges.
+    for (let pass = 0; pass < 2; pass++) {
+      const base = new Uint8ClampedArray(s);
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const i = (y * w + x) * 4;
+          const g = Math.abs(L(i) - L(i - 4)) + Math.abs(L(i) - L(i + 4)) + Math.abs(L(i) - L(i - w * 4)) + Math.abs(L(i) - L(i + w * 4));
+          if (g >= 90) continue; // edge pixel — keep it crisp
+          const mix = t * Math.sqrt(1 - g / 90);
+          for (let ch = 0; ch < 3; ch++) {
+            const avg = (base[i - 4 + ch] + base[i + 4 + ch] + base[i - w * 4 + ch] + base[i + w * 4 + ch] + base[i + ch]) / 5;
+            s[i + ch] = base[i + ch] + (avg - base[i + ch]) * mix;
+          }
+        }
+      }
+    }
+  }
+
+  const unsharp = (radius, amount) => {
+    if (amount <= 0) return;
+    const blurred = boxBlur(s, w, h, radius);
+    for (let i = 0; i < s.length; i += 4) {
+      for (let ch = 0; ch < 3; ch++) s[i + ch] = s[i + ch] + amount * (s[i + ch] - blurred[i + ch]);
+    }
+  };
+
+  // 2) Clarity: large-radius local contrast lifts the mid-tone structure that
+  //    reads as "HD" without clipping global contrast.
+  unsharp(Math.max(4, Math.min(12, Math.round(Math.min(w, h) / 120))), (clarity / 100) * 0.85);
+  // 3) Unsharp: 1px detail pass — the deblur feel on edges, hair and text.
+  unsharp(1, (sharpen / 100) * 0.9);
+
+  // 4) Vibrance: muted pixels saturate more than already-vivid ones, so skin
+  //    tones stay natural while flat colours wake up.
+  if (vibrance > 0) {
+    const v = vibrance / 100;
+    for (let i = 0; i < s.length; i += 4) {
+      const mx = Math.max(s[i], s[i + 1], s[i + 2]);
+      const mn = Math.min(s[i], s[i + 1], s[i + 2]);
+      const sat = mx === 0 ? 0 : (mx - mn) / mx;
+      const amt = v * (1 - sat);
+      if (amt <= 0.01) continue;
+      const l = lum(i);
+      s[i] += (s[i] - l) * amt;
+      s[i + 1] += (s[i + 1] - l) * amt;
+      s[i + 2] += (s[i + 2] - l) * amt;
+    }
+  }
+  return s;
+}
+
 export default function ImageEnhancer() {
   const [item, setItem] = useState(null);
   const [engine, setEngine] = useState("ai");
   const [scale, setScale] = useState(2);
   const [inputCap, setInputCap] = useState(1024);
-  const [denoise, setDenoise] = useState(20);
+  const [denoise, setDenoise] = useState(35);
+  const [clarity, setClarity] = useState(35);
   const [sharpen, setSharpen] = useState(35);
   const [color, setColor] = useState(10);
   const [format, setFormat] = useState("image/png");
@@ -194,33 +265,15 @@ export default function ImageEnhancer() {
   };
 
   const applyFinish = async (canvas) => {
-    let work = canvas;
-    if (color > 0 || denoise > 0) {
-      setStage("Polishing colours & smoothing noise…");
-      const out = document.createElement("canvas");
-      out.width = canvas.width;
-      out.height = canvas.height;
-      const ctx = out.getContext("2d");
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      if (color > 0) ctx.filter = `contrast(${1 + color / 260}) saturate(${1 + color / 110}) brightness(1.01)`;
-      ctx.drawImage(canvas, 0, 0);
-      if (denoise > 0) {
-        ctx.save();
-        ctx.filter = "blur(1.2px)";
-        ctx.globalAlpha = Math.min(0.5, denoise / 190);
-        ctx.drawImage(canvas, 0, 0);
-        ctx.restore();
-      }
-      work = out;
-    }
-    if (sharpen > 0) {
-      setStage("Sharpening fine details…");
-      // let the status paint before the (synchronous) pixel loop
-      await new Promise((r) => setTimeout(r, 30));
-      work = sharpenCanvas(work, sharpen);
-    }
-    return work;
+    if (denoise === 0 && clarity === 0 && sharpen === 0 && color === 0) return canvas;
+    setStage("Restoring detail: edge-safe denoise → local-contrast clarity → unsharp → vibrance…");
+    // let the status paint before the (synchronous) pixel loop
+    await new Promise((r) => setTimeout(r, 30));
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    frame.data.set(enhancePixels(frame.data, canvas.width, canvas.height, { denoise, clarity, sharpen, vibrance: color }));
+    ctx.putImageData(frame, 0, 0);
+    return canvas;
   };
 
   const enhance = async () => {
@@ -389,7 +442,7 @@ export default function ImageEnhancer() {
             <div className="mt-2.5 grid grid-cols-2 gap-2">
               {[
                 ["ai", "AI Upscale ★", "ESRGAN neural net rebuilds real detail. Best quality, slower."],
-                ["fast", "Fast Enhance", "Pro scaling + sharpen. Instant, no downloads, works anywhere."],
+                ["fast", "Fast Enhance", "Pro scaling + the full restoration finish. Instant, no downloads, works anywhere."],
               ].map(([val, title, desc]) => (
                 <button key={val} onClick={() => setEngine(val)} disabled={working}
                   className={`rounded-xl border px-3 py-2.5 text-left transition disabled:opacity-50 ${engine === val ? "border-fuchsia-400 bg-fuchsia-400/10" : "border-white/10 bg-white/[0.02] hover:border-fuchsia-400/40"}`}>
@@ -425,9 +478,10 @@ export default function ImageEnhancer() {
             <div className="mt-5 space-y-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Enhance finish</p>
               {[
-                ["Sharpen details", sharpen, setSharpen],
-                ["Smooth / denoise", denoise, setDenoise],
-                ["Colour & contrast boost", color, setColor],
+                ["Clarity (deblur-style local contrast)", clarity, setClarity],
+                ["Sharpen fine details", sharpen, setSharpen],
+                ["Noise & block cleanup", denoise, setDenoise],
+                ["Vibrance (colour life)", color, setColor],
               ].map(([label, val, set]) => (
                 <div key={label}>
                   <label className="flex items-center justify-between text-sm font-semibold text-white">
@@ -436,6 +490,12 @@ export default function ImageEnhancer() {
                   <input type="range" min="0" max="100" value={val} disabled={working} onChange={(e) => set(+e.target.value)} className="mt-2 w-full disabled:opacity-50" />
                 </div>
               ))}
+              <p className="text-xs leading-relaxed text-slate-500">
+                The finish is a real restoration pipeline — edge-preserving denoise, large-radius local contrast
+                (“clarity”), a 1px unsharp pass and vibrance — so blur, pixelation and JPEG blocks visibly clean up.
+                It sharpens the detail your pixels already hold; like every on-device tool it does not invent new
+                facial features the way server-side face-reenactment apps do.
+              </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor="efmt" className="text-sm font-semibold text-white">Output format</label>

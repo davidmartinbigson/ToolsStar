@@ -727,7 +727,7 @@ const stretched = ocr.ocrPreprocessPixels(lowC, 8, 8, { mode: "photo" });
 const sv = vals(stretched);
 ck("percentile stretch widens a washed-out scan", sv[0] <= 40 && sv[sv.length - 1] >= 220, `${sv[0]}..${sv[sv.length - 1]}`);
 const ocrSrc = src("components/tools/quickTools.js");
-ck("worker gets layout (PSM) + real inter-word spaces", ocrSrc.includes("preserve_interword_spaces: \"1\"") && ocrSrc.includes("tessedit_pageseg_mode: layout"));
+ck("worker gets layout (PSM) + real inter-word spaces", ocrSrc.includes("preserve_interword_spaces: \"1\"") && ocrSrc.includes("tessedit_pageseg_mode: psm"));
 ck("small scans upscale up to 3x before OCR", ocrSrc.includes("Math.min(3, 2000 / longest)"));
 ck("rotation controls exist for sideways scans", ocrSrc.includes("currently {rot}°"));
 ck("confidence readout warns when recognition is shaky", ocrSrc.includes("engine confidence {confidence}%") && ocrSrc.includes("confidence < 60"));
@@ -765,6 +765,32 @@ const cleanSrc = src("components/tools/quickTools.js");
 ck("auto-clean toggle + confidence slider wired", cleanSrc.includes("Auto-clean: ignore icons, borders & decoration glyphs") && cleanSrc.includes("Hide words below confidence"));
 ck("result note says how much was hidden", cleanSrc.includes("decoration/low-confidence word"));
 ck("centred-card layout hint exists", cleanSrc.includes("Single column / centred card"));
+
+/* ═════════ 31. Handwriting & numbers: digit repair, area select ════════
+   A scanned form with signatures and a handwritten CNIC-style number reads
+   back with classic confusions (O for 0, b for 6). The numbers mode repairs
+   digit-heavy tokens only, and the area-select crop must follow rotation.  */
+
+console.log("\n31. Handwriting & numbers mode");
+ck("digit confusions repaired in a handwritten code", ocr.ocrFixDigits("421O1-72924b6-9") === "42101-7292466-9", ocr.ocrFixDigits("421O1-72924b6-9"));
+ck("more confusions inside digit runs: S→5 q→9 Z→2", ocr.ocrFixDigits("1S5 9q9 2Z2") === "155 999 222", ocr.ocrFixDigits("1S5 9q9 2Z2"));
+ck("mostly-letter tokens stay untouched", ocr.ocrFixDigits("N.i.c No- 10TH S/O") === "N.i.c No- 10TH S/O", ocr.ocrFixDigits("N.i.c No- 10TH S/O"));
+ck("stray letters inside a digit run are dropped", ocr.ocrFixDigits("42A01") === "4201", ocr.ocrFixDigits("42A01"));
+ck("separators survive and lines are kept", ocr.ocrFixDigits("42101-7292466-9\nN.i.c No-") === "42101-7292466-9\nN.i.c No-");
+const R = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
+const r90 = ocr.ocrRotateRect(R, 90), r180 = ocr.ocrRotateRect(R, 180), r270 = ocr.ocrRotateRect(R, 270), r0 = ocr.ocrRotateRect(R, 450);
+ck("selection rect follows a 90° rotation", Math.abs(r90.x - 0.4) < 1e-9 && Math.abs(r90.y - 0.1) < 1e-9 && r90.w === 0.4 && r90.h === 0.3, JSON.stringify(r90));
+ck("selection rect follows 180°", Math.abs(r180.x - 0.6) < 1e-9 && Math.abs(r180.y - 0.4) < 1e-9, JSON.stringify(r180));
+ck("selection rect follows 270°", Math.abs(r270.x - 0.2) < 1e-9 && Math.abs(r270.y - 0.6) < 1e-9 && r270.w === 0.4 && r270.h === 0.3, JSON.stringify(r270));
+ck("rotation wraps mod 360", JSON.stringify(r0) === JSON.stringify(r90));
+ck("wide short strips read as a single line (PSM 7)", ocr.ocrRectPsm({ x: 0, y: 0.8, w: 0.9, h: 0.08 }, "3") === "7");
+ck("tall areas keep the chosen layout", ocr.ocrRectPsm({ x: 0, y: 0, w: 0.5, h: 0.5 }, "6") === "6");
+const inkNums = (() => { const d = new Uint8ClampedArray(8 * 8 * 4); for (let i = 0; i < 64; i++) { const v = i % 8 < 3 ? 40 : 235; d[i * 4] = v; d[i * 4 + 1] = v; d[i * 4 + 2] = v; d[i * 4 + 3] = 255; } return ocr.ocrPreprocessPixels(d, 8, 8, { mode: "nums" }); })();
+ck("numbers mode binarises handwriting scans", new Set(Array.from(inkNums.data.filter((_, i) => i % 4 === 0))).size <= 2);
+const numsSrc = src("components/tools/quickTools.js");
+ck("handwriting scan type offered", numsSrc.includes("Handwriting / numbers (CNIC, forms)"));
+ck("area-select controls wired", numsSrc.includes("Read only the selected area") && numsSrc.includes("Clear selection") && numsSrc.includes("drag on the scan to skip signatures"));
+ck("nums mode sets a digit whitelist for the engine", numsSrc.includes('tessedit_char_whitelist: "0123456789-/. "'));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

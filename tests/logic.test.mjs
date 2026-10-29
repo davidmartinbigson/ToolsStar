@@ -455,6 +455,63 @@ ck("related reading never includes the article itself", ARTICLES.every((a) => !r
 ck("related reading offers 3", ARTICLES.every((a) => relatedArticles(a.slug).length === 3));
 ck("getArticle resolves every slug", ARTICLES.every((a) => getArticle(a.slug)?.slug === a.slug));
 
+/* ═════════ 21. Tool-page editorial layer — prose ON the tool pages ═════════
+   The second half of the "content depth" fix: reviewers sample tool pages,
+   so the thin ones now carry real prose (how it works under the hood, where
+   the limits are, when to choose something else) from lib/toolGuides.js,
+   rendered by ToolShell between the features list and the FAQ.
+   These assertions keep that layer substantive, wired, and geo-clean, and
+   lock a word floor so no tool page can regress to interface-only copy.  */
+
+console.log("\n21. Tool-page editorial layer (deep dives)");
+const { TOOL_GUIDES, toolGuide } = await import("../lib/toolGuides.js");
+const wordsOf = (s) => (s.match(/[A-Za-z0-9'%-]+/g) || []).length;
+const guideWords = (secs) =>
+  secs.reduce(
+    (n, s) =>
+      n + wordsOf(s.h) + s.p.map(wordsOf).reduce((a, b) => a + b, 0) +
+      (s.bullets || []).map(wordsOf).reduce((a, b) => a + b, 0),
+    0
+  );
+const pageCopyWords = (slug) => {
+  const body = src(`app/tools/${slug}/page.js`)
+    .split("\n")
+    .filter((l) => !l.startsWith("export const metadata")) // SEO copy, not page body
+    .join("\n");
+  return [...body.matchAll(/"([^"]*)"|`([^`]*)`/g)]
+    .map((m) => m[1] ?? m[2] ?? "")
+    .map(wordsOf)
+    .reduce((a, b) => a + b, 0);
+};
+
+const guided = Object.keys(TOOL_GUIDES);
+ck("at least 10 tool pages carry a deep dive", guided.length >= 10, String(guided.length));
+for (const slug of guided) {
+  const secs = TOOL_GUIDES[slug];
+  const w = guideWords(secs);
+  ck(`${slug}: 2-4 prose sections`, secs.length >= 2 && secs.length <= 4, String(secs.length));
+  ck(`${slug}: >=240 words of real prose`, w >= 240, String(w));
+  ck(`${slug}: every section has a heading + paragraphs`, secs.every((s) => s.h && s.p?.length >= 1));
+  ck(`${slug}: no geo wording`, !/Pakistan|Karachi|\+92\b|Rozee\.pk/i.test(JSON.stringify(secs)));
+  ck(`${slug}: maps to a real tool`, toolSlugs.has(slug), slug);
+  ck(`${slug}: page wires its deep dive`, src(`app/tools/${slug}/page.js`).includes(`deepDive={toolGuide("${slug}")}`));
+  ck(`${slug}: guided page copy >= 500 words`, pageCopyWords(slug) + w >= 500, String(pageCopyWords(slug) + w));
+}
+ck("toolGuide resolves every catalogue slug", guided.every((s) => toolGuide(s) === TOOL_GUIDES[s]));
+ck("toolGuide is null-safe for unknown slugs", toolGuide("no-such-tool") === null);
+ck("ToolShell renders the deepDive prop", src("components/ToolShell.js").includes("deepDive?.length > 0"));
+
+// Regression floor: no tool page may slide back to interface-only copy.
+// (296 was the thinnest page the day this floor was written — video-to-mp3.)
+const COPY_FLOOR = 290;
+let thinnest = ["", Infinity];
+for (const t of TOOLS) {
+  const combined = pageCopyWords(t.slug) + (TOOL_GUIDES[t.slug] ? guideWords(TOOL_GUIDES[t.slug]) : 0);
+  if (combined < thinnest[1]) thinnest = [t.slug, combined];
+  ck(`${t.slug}: page copy >= ${COPY_FLOOR} words`, combined >= COPY_FLOOR, String(combined));
+}
+console.log(`   thinnest tool page copy now: ${thinnest[0]} (${thinnest[1]} words)`);
+
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 
 const total = pass + fails.length;

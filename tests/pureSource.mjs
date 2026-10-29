@@ -92,7 +92,7 @@ export async function enhancePure() {
 export async function alphaPure() {
   const rel = "components/tools/BackgroundRemover.js";
   const code = slice(rel, "function refineAlpha(src, w, h", "export default function BackgroundRemover()");
-  return importSource(code, ["refineAlpha"]);
+  return importSource(code, ["refineAlpha", "boxMean", "guidedAlpha"]);
 }
 
 export async function compressLadder() {

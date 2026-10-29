@@ -99,11 +99,82 @@ function refineAlpha(src, w, h, { strict = 0, soften = 0, despeckle = true } = {
   return a;
 }
 
+/* Guided-filter edge matting (He et al.), guide = the photo itself.
+   The AI mask is only a prior: filtering it with the image as the guide snaps
+   soft halos and stair-steps onto the real colour edges, which is what makes
+   hair, fur and soft fringes survive the cut-out instead of turning into a
+   sticker silhouette. Pure + O(n), so tests pin the behaviour.            */
+function boxMean(arr, w, h, r) {
+  const n = w * h;
+  const tmp = new Float32Array(n);
+  const out = new Float32Array(n);
+  const div = 2 * r + 1;
+  const cx = (x) => (x < 0 ? 0 : x >= w ? w - 1 : x);
+  const cy = (y) => (y < 0 ? 0 : y >= h ? h - 1 : y);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let sum = 0;
+    for (let x = -r; x <= r; x++) sum += arr[row + cx(x)];
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = sum / div;
+      sum += arr[row + cx(x + r + 1)] - arr[row + cx(x - r)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let y = -r; y <= r; y++) sum += tmp[cy(y) * w + x];
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum / div;
+      sum += tmp[cy(y + r + 1) * w + x] - tmp[cy(y - r) * w + x];
+    }
+  }
+  return out;
+}
+
+function guidedAlpha(rgb, alpha, w, h, opts = {}) {
+  const { radius = 4, eps = 0.02 } = opts;
+  const n = w * h;
+  const out = new Uint8ClampedArray(alpha);
+  if (n > 8_000_000) return out; // memory guard: skip matting on giant images
+  const I = new Float32Array(n);
+  const P = new Float32Array(n);
+  const II = new Float32Array(n);
+  const IP = new Float32Array(n);
+  for (let p = 0, i = 0; p < n; p++, i += 4) {
+    const l = (0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2]) / 255;
+    const m = alpha[i + 3] / 255;
+    I[p] = l;
+    P[p] = m;
+    II[p] = l * l;
+    IP[p] = l * m;
+  }
+  const meanI = boxMean(I, w, h, radius);
+  const meanP = boxMean(P, w, h, radius);
+  const meanII = boxMean(II, w, h, radius);
+  const meanIP = boxMean(IP, w, h, radius);
+  const a = IP; // reuse buffer
+  const b = II;
+  for (let p = 0; p < n; p++) {
+    const cov = meanIP[p] - meanI[p] * meanP[p];
+    const varI = Math.max(0, meanII[p] - meanI[p] * meanI[p]);
+    const ak = cov / (varI + eps);
+    a[p] = ak;
+    b[p] = meanP[p] - ak * meanI[p];
+  }
+  const meanA = boxMean(a, w, h, radius);
+  const meanB = boxMean(b, w, h, radius);
+  for (let p = 0, i = 0; p < n; p++, i += 4) {
+    const q = meanA[p] * I[p] + meanB[p];
+    out[i + 3] = q <= 0 ? 0 : q >= 1 ? 255 : Math.round(q * 255);
+  }
+  return out;
+}
+
 export default function BackgroundRemover() {
   const [file, setFile] = useState(null);
   const [srcUrl, setSrcUrl] = useState("");
   const [dims, setDims] = useState(null);
-  const [model, setModel] = useState("small");
+  const [model, setModel] = useState("large");
   const [working, setWorking] = useState(false);
   const [stage, setStage] = useState("");
   const [progress, setProgress] = useState(null);
@@ -180,6 +251,9 @@ export default function BackgroundRemover() {
       if (seqRef.current !== seq) return;
       const raw = await blobToImageData(blob);
       if (seqRef.current !== seq) return;
+      // Edge-mat the mask against the photo's own colours once per run; the
+      // cleanup sliders then re-run only the cheap alpha passes on top.
+      raw.matted = guidedAlpha(raw.data, raw.data, raw.width, raw.height);
       rawRef.current = raw;
       applyRefined(raw, { strict, soften, despeckle });
       setProgress(100);
@@ -209,7 +283,7 @@ export default function BackgroundRemover() {
   };
 
   const applyRefined = (raw, cfg) => {
-    const data = refineAlpha(raw.data, raw.width, raw.height, cfg);
+    const data = refineAlpha(raw.matted || raw.data, raw.width, raw.height, cfg);
     const canvas = document.createElement("canvas");
     canvas.width = raw.width;
     canvas.height = raw.height;
@@ -319,10 +393,11 @@ export default function BackgroundRemover() {
 
             {/* model choice */}
             <h2 className="mt-5 text-sm font-bold uppercase tracking-wider text-slate-300">AI model</h2>
-            <div className="mt-2.5 grid grid-cols-2 gap-2">
+            <div className="mt-2.5 grid grid-cols-3 gap-2">
               {[
-                ["small", "Fast ★", "Quicker download, great for most photos"],
-                ["medium", "Best quality", "Cleaner hair/fur edges, larger one-time download"],
+                ["small", "Fast", "Quickest download, fine for simple backgrounds"],
+                ["medium", "Balanced", "Middle ground for busy backgrounds"],
+                ["large", "Best quality ★", "Studio-class hair & edge detail — larger one-time download, cached after"],
               ].map(([val, title, desc]) => (
                 <button
                   key={val}
@@ -427,9 +502,10 @@ export default function BackgroundRemover() {
 
                 <h2 className="mt-5 text-sm font-bold uppercase tracking-wider text-slate-300">Matte cleanup</h2>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  If faint background haze or stray patches survive, raise <strong className="text-slate-300">strictness</strong> to
-                  push them fully transparent; despeckle deletes isolated leftover blobs and softening feathers the edge so the
-                  cut-out does not look stickered. Runs instantly on your device.
+                  Edges are re-matted against your photo's own colours (a guided filter), so hair, fur and soft fringes keep
+                  their detail instead of a hard halo. If faint haze or stray patches still survive, raise
+                  <strong className="text-slate-300"> strictness</strong> to push them fully transparent; despeckle deletes isolated
+                  leftover blobs and softening feathers the edge. All of it runs instantly on your device.
                 </p>
                 <div className="mt-3 space-y-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
                   <div>

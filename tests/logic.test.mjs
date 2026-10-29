@@ -653,6 +653,38 @@ ck("softening feathers the matte edge", featheredM[(8 * 16 + 8) * 4 + 3] < 255 &
 ck("refine never touches RGB", cleanedM[0] === 200 && cleanedM[1] === 100 && cleanedM[2] === 50);
 ck("matte cleanup panel is wired in the UI", src("components/tools/BackgroundRemover.js").includes("Leftover strictness") && src("components/tools/BackgroundRemover.js").includes("Remove stray leftover patches (despeckle)"));
 
+/* ═════════ 28. Background remover — guided-filter edge matting ═════════
+   The AI mask is only a prior now: a guided filter (guide = the photo's own
+   luminance) snaps soft halos and stair-steps onto real colour edges, which
+   is the difference between a sticker silhouette and remove.bg-style hair.
+   Pinned on synthetic guides/masks.                                        */
+
+console.log("\n28. Guided-filter edge matting");
+ck("matting runs automatically on every run", src("components/tools/BackgroundRemover.js").includes("raw.matted = guidedAlpha(raw.data, raw.data, raw.width, raw.height)"));
+ck("sliders re-run on the matted matte", src("components/tools/BackgroundRemover.js").includes("refineAlpha(raw.matted || raw.data"));
+ck("best-quality model is the default", src("components/tools/BackgroundRemover.js").includes('const [model, setModel] = useState("large")'));
+ck("three honest model tiers", src("components/tools/BackgroundRemover.js").includes("Studio-class hair & edge detail"));
+const gm = (w, h, fn) => { const d = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const [r, g, b, a] = fn(x, y); d[(y * w + x) * 4] = r; d[(y * w + x) * 4 + 1] = g; d[(y * w + x) * 4 + 2] = b; d[(y * w + x) * 4 + 3] = a; } return d; };
+// flat grey photo, noisy mask → matting must smooth the mask
+const flatGuide = gm(32, 32, (x, y) => [120, 120, 120, ((x + y) % 2 ? 235 : 205)]);
+const smoothed = bg.guidedAlpha(flatGuide, flatGuide, 32, 32);
+const sd = (d) => { const v = []; for (let i = 3; i < d.length; i += 4) v.push(d[i]); const m = v.reduce((a, b) => a + b, 0) / v.length; return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length); };
+ck("matting smooths mask noise on flat colour", sd(smoothed) < sd(flatGuide) * 0.5, `${sd(smoothed).toFixed(1)} vs ${sd(flatGuide).toFixed(1)}`);
+// sharp colour edge at x=16, mask edge blurred across 12..20 → must snap to 16
+const edgeGuide = gm(32, 32, (x) => [x < 16 ? 30 : 220, x < 16 ? 30 : 220, x < 16 ? 30 : 220, 0]);
+const blurMask = gm(32, 32, (x) => [0, 0, 0, x < 12 ? 255 : x > 20 ? 0 : Math.round(255 * (20 - x) / 8)]);
+const snapped = bg.guidedAlpha(edgeGuide, blurMask, 32, 32);
+const at = (d, x) => d[(16 * 32 + x) * 4 + 3];
+ck("matting snaps a soft halo onto the real edge", at(snapped, 14) > at(blurMask, 14) && at(snapped, 18) < at(blurMask, 18), `${at(snapped, 14)}/${at(snapped, 18)} vs ${at(blurMask, 14)}/${at(blurMask, 18)}`);
+ck("solid subject interior stays solid", at(snapped, 4) >= 250, String(at(snapped, 4)));
+ck("clear background interior stays clear", at(snapped, 28) <= 5, String(at(snapped, 28)));
+// memory guard: gigantic inputs skip matting instead of eating RAM
+const big = new Uint8ClampedArray((4000 * 2500) * 4);
+for (let i = 0; i < big.length; i += 4) { big[i] = big[i + 1] = big[i + 2] = 120; big[i + 3] = ((i / 4) % 2 ? 235 : 205); }
+const bigOut = bg.guidedAlpha(big, big, 4000, 2500);
+ck("giant images skip matting (memory guard)", bigOut[3] === 205 && bigOut[7] === 235, `${bigOut[3]}/${bigOut[7]}`);
+ck("boxMean of a constant field is that constant", Math.abs(bg.boxMean(new Float32Array(64).fill(0.5), 8, 8, 2)[0] - 0.5) < 1e-6);
+
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 
 const total = pass + fails.length;

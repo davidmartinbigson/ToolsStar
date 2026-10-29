@@ -48,16 +48,15 @@ export const metadata = {
     googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1 },
   },
   icons: {
+    // Real, crawlable files (NOT data: URIs — Google's favicon crawler can
+    // only fetch stable URLs, and /favicon.ico is the legacy root fallback).
+    // 96/192 are multiples of 48px as Google's favicon guidelines ask for.
     icon: [
-      {
-        url:
-          "data:image/svg+xml," +
-          encodeURIComponent(
-            `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#ffc531'/><path d='M32 10l6.7 14.4 15.8 1.8-11.6 10.7 3.1 15.6L32 44.4l-14 8.1 3.1-15.6-11.6-10.7 15.8-1.8z' fill='#241a00'/></svg>`
-          ),
-        type: "image/svg+xml",
-      },
+      { url: "/favicon.ico", sizes: "48x48", type: "image/x-icon" },
+      { url: "/favicon-96.png", sizes: "96x96", type: "image/png" },
+      { url: "/favicon-192.png", sizes: "192x192", type: "image/png" },
     ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 

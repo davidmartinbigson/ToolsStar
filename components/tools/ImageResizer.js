@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, stripExt, loadImage, renderToBlob } from "@/lib/utils";
+import { formatBytes, downloadBlob, stripExt, loadImage, renderToBlob, friendlyError } from "@/lib/utils";
 
 const PRESETS = [
   { name: "Instagram Post", w: 1080, h: 1080 },
@@ -66,7 +66,7 @@ export default function ImageResizer() {
       setLock(true);
       setFitMode("contain");
     } catch (e) {
-      setError(e.message);
+      setError(friendlyError(e, "Could not read that image."));
     }
   }, []);
 
@@ -169,7 +169,7 @@ export default function ImageResizer() {
         placement,
       });
     } catch (e) {
-      setError(e.message || "Resize failed in this browser.");
+      setError(friendlyError(e, "Resize failed in this browser."));
     }
   };
 

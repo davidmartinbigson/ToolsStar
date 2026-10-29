@@ -78,7 +78,30 @@ npm install
 npm run dev        # development → http://localhost:3000
 npm run build      # production build
 npm run start      # production server
+npm test           # 237 assertions over the tools' pure logic (no framework)
+npm run test:watch # re-run on every save
 ```
+
+### What `npm test` covers
+
+`tests/logic.test.mjs` is a plain-Node suite (no Jest/Vitest, no extra
+dependencies, exits non-zero on failure). `tests/pureSource.mjs` slices the
+*pure* logic straight out of the real `"use client"` files — between code
+markers, never line numbers — and imports it through a `data:` URL, so the tests
+always run against the code that actually ships and cannot drift out of sync.
+
+| Area | Assertions |
+| --- | --- |
+| Age Calculator date maths | 68,121 date pairs swept for range, exact reconstruction and minimality |
+| Percentage / GPA / Zakat | grade bands, grade points, standing thresholds, nisab constants, currency formatting |
+| Sign PDF geometry | `visualToUser` round-trips 400 random points + all 4 corners for every `/Rotate` value |
+| PNG compression | palette maths, colour census, and every "no savings" message |
+| Shared helpers | `formatBytes`, `savedPct`, `stripExt`, `fitWithin`, `friendlyError` |
+| Config guards | every CDN host used in code is preconnected; every engine lists a mirror |
+
+**Not covered here:** the tools that need a real browser — video, canvas,
+WebAssembly, `MediaRecorder`, camera/microphone. Those have to be checked by
+hand (see §8).
 
 ## 4. Deploy FREE (recommended: Vercel)
 
@@ -139,7 +162,12 @@ lib/
   tools.js            Tool catalog (single source of truth)
   site.js             Domain, contact, CDN & monetisation constants  ← env-driven
   consent.js          Consent read/write/subscribe helpers (client)
-  utils.js            Shared helpers (sizes, canvas export, downloads)
+  utils.js            Shared helpers (sizes, canvas export, downloads,
+                      friendlyError, multi-CDN loadScriptAny)
+tests/
+  logic.test.mjs      237 assertions over the tools' pure logic — `npm test`
+  pureSource.mjs      Marker-based extractor: slices pure functions out of the
+                      real "use client" files so tests can never drift
 ```
 
 ## 8. Honest limitations to know

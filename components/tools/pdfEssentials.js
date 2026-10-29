@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, stripExt } from "@/lib/utils";
+import { formatBytes, downloadBlob, stripExt, friendlyError } from "@/lib/utils";
 
 /* ── Lazy PDF engines: loaded only when one of these tools is used ── */
 let _pdfLib = null;
@@ -20,13 +20,6 @@ async function pdfjs() {
   lib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.8.69/build/pdf.worker.min.mjs";
   _pdfjs = lib;
   return lib;
-}
-
-function friendlyError(error, fallback = "Could not read this PDF. It may be corrupted or password-protected.") {
-  const message = String(error?.message || error || "");
-  if (/encrypt|password/i.test(message)) return "This PDF is password-protected. Remove its password first, then try again.";
-  if (/unsupported|encode|glyph|character/i.test(message)) return "That text contains characters the standard PDF font cannot draw. Please use simple English letters, numbers and punctuation.";
-  return message && message.length < 180 ? message : fallback;
 }
 
 const btnPrimary = "inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60";

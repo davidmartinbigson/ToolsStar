@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, downloadZip, stripExt, loadImage, loadScript } from "@/lib/utils";
+import { formatBytes, downloadBlob, downloadZip, stripExt, loadImage, loadScript, friendlyError } from "@/lib/utils";
 
 const btnP = "inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:opacity-60 disabled:cursor-not-allowed";
 const btnG = "inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 font-extrabold text-[#032114] shadow-xl shadow-emerald-500/20 transition hover:bg-emerald-300 disabled:opacity-60";
@@ -290,7 +290,7 @@ export default function DocumentScanner() {
       setItem(it);
       setCorners(defaultCorners(it));
       runDetect(it);
-    } catch (e) { setError(e.message); }
+    } catch (e) { setError(friendlyError(e, "Could not read that image. Try a different photo.")); }
   }, [defaultCorners, runDetect]);
 
   useEffect(() => {

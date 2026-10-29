@@ -8,6 +8,7 @@ import {
   downloadZip,
   fitWithin,
   formatBytes,
+  friendlyError,
   loadImage,
   loadScript,
   renderToBlob,
@@ -116,7 +117,7 @@ export function SvgToPng() {
       setOutputWidth(Math.min(2048, Math.max(width, 1024)));
     } catch (error) {
       setItem(null);
-      setError(error.message || "Could not read this SVG.");
+      setError(friendlyError(error, "Could not read this SVG."));
     }
   }, []);
 
@@ -548,10 +549,12 @@ export function WatermarkImage() {
   const add = useCallback(async (files) => {
     setError(""); setResults([]);
     const fresh = [];
+    const skipped = [];
     for (const file of files.slice(0, 30)) {
-      try { fresh.push({ id: uid(), file, ...(await loadImage(file)) }); } catch {}
+      try { fresh.push({ id: uid(), file, ...(await loadImage(file)) }); } catch { skipped.push(file.name); }
     }
     if (!fresh.length) setError("Could not read those images. Try JPG, PNG or WebP files.");
+    else if (skipped.length) setError(`Added ${fresh.length}, but could not read ${skipped.length} file${skipped.length === 1 ? "" : "s"}: ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}.`);
     setItems((current) => [...current, ...fresh]);
   }, []);
 
@@ -749,7 +752,7 @@ export function ExifViewer() {
       setMetadata(flattenMetadata(parsed || {}));
       if (coords?.latitude != null && coords?.longitude != null) setGps(coords);
     } catch (error) {
-      setError(error.message || "Could not read metadata from this file.");
+      setError(friendlyError(error, "Could not read metadata from this file."));
       setMetadata({});
     } finally { setLoading(false); }
   }, []);

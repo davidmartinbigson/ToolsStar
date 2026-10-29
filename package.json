@@ -7,7 +7,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node tests/logic.test.mjs",
+    "test:watch": "node --watch tests/logic.test.mjs"
   },
   "dependencies": {
     "next": "^15.5.4",

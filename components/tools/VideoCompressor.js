@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, savedPct, downloadBlob, stripExt } from "@/lib/utils";
+import { formatBytes, savedPct, downloadBlob, stripExt, friendlyError } from "@/lib/utils";
 
 const PRESETS = [
   { name: "Best quality", desc: "1080p · 5 Mbps", res: "1080", bitrate: 5 },
@@ -208,7 +208,7 @@ export default function VideoCompressor() {
       setProgress(100);
       setStatusText("Done! Your compressed video is ready.");
     } catch (e) {
-      setError(e.message || "Video compression failed in this browser.");
+      setError(friendlyError(e, "Video compression failed in this browser. Try a shorter clip or a lower resolution."));
       setStatusText("");
     } finally {
       cleanup();

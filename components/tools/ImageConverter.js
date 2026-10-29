@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, stripExt, loadImage, renderToBlob, uid } from "@/lib/utils";
+import { formatBytes, downloadBlob, stripExt, loadImage, renderToBlob, uid, friendlyError } from "@/lib/utils";
 
 const FORMATS = [
   { type: "image/jpeg", label: "JPG", ext: "jpg", desc: "Universal, smallest for photos. No transparency." },
@@ -49,7 +49,7 @@ export default function ImageConverter() {
           ? { ...it, status: "done", result: blob, resultUrl: URL.createObjectURL(blob), outName: `${stripExt(item.file.name)}.${target.ext}` }
           : it)));
       } catch (e) {
-        setItems((p) => p.map((it) => (it.id === item.id ? { ...it, status: "error", note: e.message } : it)));
+        setItems((p) => p.map((it) => (it.id === item.id ? { ...it, status: "error", note: friendlyError(e, "Conversion failed for this image.") } : it)));
       }
     }
     setBusy(false);

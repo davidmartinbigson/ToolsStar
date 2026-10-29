@@ -1,0 +1,430 @@
+// Regression suite for the pure logic behind the tools.
+//
+//   node tests/logic.test.mjs        (no framework, no extra dependencies)
+//
+// Everything here is executed against the REAL source files via
+// tests/pureSource.mjs, so a test can never drift away from what ships.
+// Browser-only tools (video, canvas, WebAssembly, MediaRecorder) are not
+// covered — they need a real browser.
+
+import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, src } from "./pureSource.mjs";
+
+let pass = 0;
+const fails = [];
+const ck = (name, cond, detail = "") => {
+  if (cond) pass++;
+  else fails.push(`${name}${detail ? " → " + detail : ""}`);
+};
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const near = (a, b, e = 1e-6) => Math.abs(a - b) < e;
+
+const calc = await calcPure();
+const geo = await signPdfGeometry();
+const { wcStats } = await wordCounter();
+const u = await utils();
+const png = await pngLogic();
+
+/* ══════════════════════ 1. AGE CALCULATOR — date maths ══════════════════════
+   Regression: diffYmd used to borrow only ONE month, so a birthday on the
+   29th/30th/31st measured against 1 March produced negative days
+   (e.g. 2023-01-31 → 2023-03-01 came out as "0y 1m -2d").               */
+
+const D = (s) => calc.parseLocalDate(s);
+const T = (s) => calc.toInputDate(D(s));
+
+console.log("1. Age Calculator — parseLocalDate / toInputDate / longDate");
+ck("parseLocalDate builds a LOCAL date (not UTC midnight)", D("2024-03-15").getHours() === 0 && D("2024-03-15").getDate() === 15);
+ck("round-trips through the <input type=date> format", T("2024-03-15") === "2024-03-15" && T("2024-01-05") === "2024-01-05");
+ck("empty / null → null", calc.parseLocalDate("") === null && calc.parseLocalDate(null) === null && calc.parseLocalDate(undefined) === null);
+ck("garbage → null", calc.parseLocalDate("hello") === null && calc.parseLocalDate("2024-13") === null && calc.parseLocalDate("2024-03") === null);
+ck("startOfDay zeroes the clock", calc.startOfDay(new Date(2024, 5, 15, 17, 33, 9)).getHours() === 0);
+ck("longDate renders '15 March 2024'", calc.longDate(D("2024-03-15")) === "15 March 2024", calc.longDate(D("2024-03-15")));
+ck("MONTHS has 12 entries", calc.MONTHS.length === 12 && calc.MONTHS[0] === "January");
+
+console.log("2. Age Calculator — birthdayIn (leap-day and month-end clamping)");
+ck("29 Feb stays 29 Feb in a leap year", T("2000-02-29") && calc.toInputDate(calc.birthdayIn(2024, D("2000-02-29"))) === "2024-02-29");
+ck("29 Feb falls back to 28 Feb in a common year", calc.toInputDate(calc.birthdayIn(2023, D("2000-02-29"))) === "2023-02-28", calc.toInputDate(calc.birthdayIn(2023, D("2000-02-29"))));
+ck("never yields an invalid date across many years", [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2100].every((y) => !Number.isNaN(calc.birthdayIn(y, D("2000-02-29")).getTime())));
+
+console.log("3. Age Calculator — diffYmd (THE regression)");
+const KNOWN = [
+  ["2000-01-01", "2000-01-01", [0, 0, 0]],
+  ["2000-01-01", "2000-01-02", [0, 0, 1]],
+  ["2000-06-15", "2024-06-15", [24, 0, 0]],
+  ["2000-01-01", "2024-06-15", [24, 5, 14]],
+  ["2000-12-31", "2024-06-15", [23, 5, 15]],
+  ["2024-02-29", "2025-02-28", [1, 0, 0]],
+  ["2023-01-31", "2023-03-01", [0, 1, 1]], // was "0y 1m -2d"
+  ["2023-01-30", "2023-03-01", [0, 1, 1]], // was "0y 1m -1d"
+  ["2024-01-31", "2024-03-01", [0, 1, 1]], // was "0y 1m -1d" (leap Feb)
+];
+for (const [a, b, want] of KNOWN) {
+  const r = calc.diffYmd(D(a), D(b));
+  ck(`diffYmd ${a} → ${b} = ${want[0]}y ${want[1]}m ${want[2]}d`, eq([r.years, r.months, r.days], want), `got ${r.years}y ${r.months}m ${r.days}d`);
+}
+
+// Independent oracle for clamped month addition (the standard convention).
+function addMonthsClamped(date, months) {
+  const first = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  return new Date(first.getFullYear(), first.getMonth(), Math.min(date.getDate(), lastDay));
+}
+
+console.log("   exhaustive sweep: range, reconstruction and minimality");
+const DAYS = [1, 15, 28, 29, 30, 31];
+let swept = 0;
+const rangeBad = [], reconBad = [], minBad = [];
+for (let y = 2021; y <= 2024; y++) {
+  for (let m = 0; m < 12; m++) {
+    for (const d1 of DAYS) {
+      const from = new Date(y, m, d1);
+      if (from.getDate() !== d1) continue;
+      for (let y2 = y; y2 <= 2026; y2++) {
+        for (let m2 = 0; m2 < 12; m2++) {
+          for (const d2 of DAYS) {
+            const to = new Date(y2, m2, d2);
+            if (to.getDate() !== d2 || to < from) continue;
+            const r = calc.diffYmd(from, to);
+            swept++;
+            const tag = `${calc.toInputDate(from)}→${calc.toInputDate(to)}=${r.years}y${r.months}m${r.days}d`;
+            if (r.years < 0 || r.months < 0 || r.days < 0 || r.months > 11 || r.days > 31) {
+              if (rangeBad.length < 5) rangeBad.push(tag);
+            }
+            // Clamped month-addition is NOT associative (29 Feb 2024 + 12m =
+            // 28 Feb 2025, + 1m = 28 Mar 2025; but + 13m in one step = 29 Mar),
+            // so the oracle walks the same way an age calculator does: whole
+            // years first, then whole months from that anniversary.
+            // Whole years are jumped in ONE step from the start date (so a
+            // 29 Feb birthday lands back on 29 Feb in the next leap year),
+            // then whole months are jumped in one step from that anniversary.
+            const anniversary = addMonthsClamped(from, r.years * 12);
+            const base = addMonthsClamped(anniversary, r.months);
+            const rec = new Date(base.getFullYear(), base.getMonth(), base.getDate() + r.days);
+            if (rec.getTime() !== to.getTime() && reconBad.length < 5) reconBad.push(tag);
+            // Minimal: taking one more month from the anniversary overshoots.
+            if (addMonthsClamped(anniversary, r.months + 1) <= to && minBad.length < 5) minBad.push(tag);
+          }
+        }
+      }
+    }
+  }
+}
+console.log(`   swept ${swept.toLocaleString("en-US")} date pairs`);
+ck(`all ${swept} pairs stay in range (no negative days/months)`, rangeBad.length === 0, rangeBad.join(", "));
+ck("all pairs reconstruct exactly (from + years/months/days === to)", reconBad.length === 0, reconBad.join(", "));
+ck("all pairs are minimal (one more month would overshoot the anniversary)", minBad.length === 0, minBad.join(", "));
+
+/* ═════════════════ 4. PERCENTAGE / GPA / ZAKAT domain constants ═════════════ */
+
+console.log("\n4. Percentage Calculator — grade bands");
+for (const [pct, prefix] of [[100, "A+"], [80, "A+"], [79.99, "A /"], [70, "A /"], [69.9, "B"], [60, "B"],
+                             [59, "C"], [50, "C"], [49, "D"], [40, "D"], [39, "E"], [33, "E"], [32.9, "F"], [0, "F"]]) {
+  ck(`gradeFor(${pct}) starts with "${prefix}"`, calc.gradeFor(pct).startsWith(prefix), calc.gradeFor(pct));
+}
+ck("bands are ordered descending and reach 0", calc.GRADE_BANDS[0][0] === 80 && calc.GRADE_BANDS.at(-1)[0] === 0);
+ck("five percentage modes exist", calc.PCT_MODES.length === 5 && calc.PCT_MODES.every((m) => m.length === 3));
+
+console.log("5. GPA Calculator");
+const GP = Object.fromEntries(calc.GRADE_POINTS);
+ck("11 grade options A…F", calc.GRADE_POINTS.length === 11, String(calc.GRADE_POINTS.length));
+ck("A=4.00, A-=3.67, B+=3.33, B=3.00, C=2.00, F=0", GP.A === 4 && GP["A-"] === 3.67 && GP["B+"] === 3.33 && GP.B === 3 && GP.C === 2 && GP.F === 0);
+ck("grade points are monotonically non-increasing", calc.GRADE_POINTS.every((g, i, a) => i === 0 || g[1] <= a[i - 1][1]));
+for (const [gpa, want] of [[4.0, "Perfect"], [3.99, "Perfect"], [3.98, "Excellent"], [3.7, "Excellent"],
+                           [3.69, "Very good"], [3.3, "Very good"], [3.29, "Good"], [3.0, "Good"],
+                           [2.99, "Satisfactory"], [2.5, "Satisfactory"], [2.49, "Pass"], [2.0, "Pass"], [1.99, "probation"]]) {
+  ck(`standingFor(${gpa}) → "${want}"`, calc.standingFor(gpa).includes(want), calc.standingFor(gpa));
+}
+const weighted = (courses) => {
+  const tc = courses.reduce((s, c) => s + c.credits, 0);
+  return tc ? courses.reduce((s, c) => s + c.credits * (GP[c.grade] ?? 0), 0) / tc : 0;
+};
+ck("weighted GPA uses credits, not a plain average",
+  near(weighted([{ credits: 3, grade: "A" }, { credits: 1, grade: "F" }]), 3.0, 1e-9),
+  String(weighted([{ credits: 3, grade: "A" }, { credits: 1, grade: "F" }])));
+ck("zero credits → 0, never NaN", weighted([]) === 0 && Number.isFinite(weighted([])));
+ck("default sample courses are valid", calc.DEFAULT_COURSES.every((c) => c.credits > 0 && GP[c.grade] !== undefined));
+
+console.log("6. Zakat Calculator");
+ck("1 tola = 11.664 g", calc.TOLA_GRAMS === 11.664);
+ck("silver nisab is exactly 52.5 tola", near(52.5 * calc.TOLA_GRAMS, calc.NISAB_SILVER_GRAMS, 1e-9), `${52.5 * calc.TOLA_GRAMS} vs ${calc.NISAB_SILVER_GRAMS}`);
+ck("gold nisab is exactly 7.5 tola", near(7.5 * calc.TOLA_GRAMS, calc.NISAB_GOLD_GRAMS, 1e-9), `${7.5 * calc.TOLA_GRAMS} vs ${calc.NISAB_GOLD_GRAMS}`);
+ck("gold nisab < silver nisab (correct ordering)", calc.NISAB_GOLD_GRAMS < calc.NISAB_SILVER_GRAMS);
+ck("8 currencies offered", calc.CURRENCIES.length === 8, calc.CURRENCIES.join(","));
+ck("2.5% rate arithmetic", 100000 * 0.025 === 2500);
+ck("money() groups thousands", calc.money(250000, "USD").includes("250,000"), calc.money(250000, "USD"));
+ck("money(NaN) degrades to a zero string, never 'NaN'", !calc.money(NaN, "USD").includes("NaN"), calc.money(NaN, "USD"));
+ck("money() survives an unknown currency", typeof calc.money(5, "XYZ") === "string" && !calc.money(5, "XYZ").includes("NaN"));
+
+console.log("7. num() / fmt() input coercion");
+for (const [input, want] of [["12.5", 12.5], ["", 0], ["abc", 0], [undefined, 0], [null, 0], [NaN, 0], ["1e3", 1000], ["-5", -5], ["  7  ", 7], [Infinity, 0]]) {
+  ck(`num(${JSON.stringify(input)}) = ${want}`, calc.num(input) === want, String(calc.num(input)));
+}
+ck("num never returns NaN/Infinity", [NaN, Infinity, -Infinity, "x", ""].every((v) => Number.isFinite(calc.num(v))));
+ck("fmt groups and rounds", calc.fmt(1234.5678) === "1,234.57", calc.fmt(1234.5678));
+ck("fmt honours a digits argument", calc.fmt(1000, 0) === "1,000", calc.fmt(1000, 0));
+ck("fmt(Infinity/NaN) → '0'", calc.fmt(Infinity) === "0" && calc.fmt(NaN) === "0");
+
+/* ═════════════ 8. SignPdf — visual ⇄ user-space coordinate transform ════════
+   Regression: the R=180 branch returned `y: H - vy`, which mirrors the
+   signature vertically — a mark placed at the visual top landed at the
+   bottom of the page. Verified by an independent forward mapping.          */
+
+console.log("\n8. Sign PDF — pageGeometry");
+const mkPage = (W, H, angle) => ({ getSize: () => ({ width: W, height: H }), getRotation: () => ({ angle }) });
+for (const [W, H, R, eVW, eVH] of [[595, 842, 0, 595, 842], [595, 842, 90, 842, 595], [595, 842, 180, 595, 842],
+                                   [595, 842, 270, 842, 595], [800, 600, 90, 600, 800], [800, 600, 180, 800, 600]]) {
+  const g = geo.pageGeometry(mkPage(W, H, R));
+  ck(`pageGeometry ${W}x${H}@${R}° → VW=${eVW} VH=${eVH}`, g.VW === eVW && g.VH === eVH, `got ${g.VW}x${g.VH}`);
+}
+ck("pageGeometry normalises out-of-range rotation (-90 → 270)", geo.pageGeometry(mkPage(595, 842, -90)).R === 270);
+ck("pageGeometry normalises 450 → 90", geo.pageGeometry(mkPage(595, 842, 450)).R === 90);
+
+// Independent oracle: PDF user space (origin bottom-left, y up) → what the
+// viewer shows (origin top-left, y down) after rotating the page R° clockwise.
+function mediaToVisual(ux, uy, W, H, R) {
+  const X = ux, Y = H - uy;
+  if (R === 90) return { vx: H - Y, vy: X };
+  if (R === 180) return { vx: W - X, vy: H - Y };
+  if (R === 270) return { vx: Y, vy: W - X };
+  return { vx: X, vy: Y };
+}
+
+console.log("9. Sign PDF — visualToUser round-trip (400 random points per rotation)");
+for (const R of [0, 90, 180, 270]) {
+  const W = 595.28, H = 841.89; // A4
+  const g = geo.pageGeometry(mkPage(W, H, R));
+  let worst = 0, at = null;
+  for (let i = 0; i < 400; i++) {
+    const vx = Math.random() * g.VW, vy = Math.random() * g.VH;
+    const p = geo.visualToUser(vx, vy, g);
+    const back = mediaToVisual(p.x, p.y, W, H, R);
+    const err = Math.hypot(back.vx - vx, back.vy - vy);
+    if (err > worst) { worst = err; at = { vx, vy, p, back }; }
+  }
+  ck(`visualToUser round-trips at R=${R}°`, worst < 1e-6,
+     at ? `max error ${worst.toFixed(2)}pt at visual(${at.vx.toFixed(0)},${at.vy.toFixed(0)}) → user(${at.p.x.toFixed(0)},${at.p.y.toFixed(0)}) → visual(${at.back.vx.toFixed(0)},${at.back.vy.toFixed(0)})` : "");
+}
+console.log("   corners (where a signature box actually lands)");
+for (const R of [0, 90, 180, 270]) {
+  const W = 595.28, H = 841.89;
+  const g = geo.pageGeometry(mkPage(W, H, R));
+  for (const [label, vx, vy] of [["top-left", 0, 0], ["top-right", g.VW, 0], ["bottom-left", 0, g.VH], ["bottom-right", g.VW, g.VH]]) {
+    const p = geo.visualToUser(vx, vy, g);
+    const back = mediaToVisual(p.x, p.y, W, H, R);
+    ck(`R=${R}° ${label} maps back onto itself`, near(back.vx, vx) && near(back.vy, vy),
+       `visual(${vx.toFixed(0)},${vy.toFixed(0)}) → visual(${back.vx.toFixed(0)},${back.vy.toFixed(0)})`);
+  }
+}
+ck("every rotation returns a legal rotate value", [0, 90, 180, 270].every((R) =>
+  [-90, 0, 90, 180].includes(geo.visualToUser(10, 10, geo.pageGeometry(mkPage(595, 842, R))).rotate)));
+ck("user-space output always stays inside the media box", [0, 90, 180, 270].every((R) => {
+  const W = 595.28, H = 841.89, g = geo.pageGeometry(mkPage(W, H, R));
+  for (let i = 0; i < 200; i++) {
+    const p = geo.visualToUser(Math.random() * g.VW, Math.random() * g.VH, g);
+    if (p.x < -1e-6 || p.x > W + 1e-6 || p.y < -1e-6 || p.y > H + 1e-6) return false;
+  }
+  return true;
+}));
+
+/* ══════════════════════ 10. lib/utils.js shared helpers ═════════════════════
+   Regression: formatBytes(NaN) returned the literal string "NaN undefined"
+   because Math.log(NaN) → NaN → sizes[NaN] → undefined.                   */
+
+console.log("\n10. formatBytes");
+ck("formatBytes(0) = '0 B'", u.formatBytes(0) === "0 B", u.formatBytes(0));
+ck("formatBytes(null/undefined) = '0 B'", u.formatBytes(null) === "0 B" && u.formatBytes(undefined) === "0 B");
+ck("formatBytes(NaN) never prints NaN or undefined", !/NaN|undefined/.test(u.formatBytes(NaN)), u.formatBytes(NaN));
+ck("formatBytes(-1024) never prints NaN or undefined", !/NaN|undefined/.test(u.formatBytes(-1024)), u.formatBytes(-1024));
+ck("formatBytes(Infinity) never prints undefined", !/undefined/.test(u.formatBytes(Infinity)), u.formatBytes(Infinity));
+ck("formatBytes(1024) = '1.00 KB'", u.formatBytes(1024) === "1.00 KB", u.formatBytes(1024));
+ck("formatBytes(1048576) = '1.00 MB'", u.formatBytes(1048576) === "1.00 MB", u.formatBytes(1048576));
+ck("formatBytes(1073741824) = '1.00 GB'", u.formatBytes(1073741824) === "1.00 GB", u.formatBytes(1073741824));
+ck("honours the decimals argument", u.formatBytes(1536, 1) === "1.5 KB", u.formatBytes(1536, 1));
+ck("248 MB video reads sensibly", u.formatBytes(248 * 1024 * 1024).endsWith("MB"), u.formatBytes(248 * 1024 * 1024));
+ck("never exceeds the GB unit for huge values", u.formatBytes(5 * 1024 ** 4).endsWith("GB"), u.formatBytes(5 * 1024 ** 4));
+
+console.log("11. savedPct");
+ck("savedPct(100,50) = 50", u.savedPct(100, 50) === 50);
+ck("savedPct(100,100) = 0", u.savedPct(100, 100) === 0);
+ck("clamps a LARGER output to 0 (never a negative saving)", u.savedPct(100, 150) === 0, String(u.savedPct(100, 150)));
+ck("no divide-by-zero", u.savedPct(0, 10) === 0 && Number.isFinite(u.savedPct(0, 10)));
+ck("null/undefined after → 0", u.savedPct(100, null) === 0 && u.savedPct(100, undefined) === 0);
+ck("248 MB → 21 MB reads as 92%", u.savedPct(248 * 1024 * 1024, 21 * 1024 * 1024) === 92, String(u.savedPct(248 * 1024 * 1024, 21 * 1024 * 1024)));
+
+console.log("12. stripExt / fitWithin / uid");
+ck("stripExt('photo.png') = 'photo'", u.stripExt("photo.png") === "photo");
+ck("stripExt keeps inner dots", u.stripExt("my.report.final.png") === "my.report.final", u.stripExt("my.report.final.png"));
+ck("stripExt('noext') = 'noext'", u.stripExt("noext") === "noext");
+ck("stripExt('') = ''", u.stripExt("") === "");
+for (const [w, h, max, ew, eh] of [[1000, 500, 100, 100, 50], [500, 1000, 100, 50, 100], [1920, 1080, 1280, 1280, 720],
+                                   [100, 100, 500, 100, 100], [800, 600, 0, 800, 600]]) {
+  const r = u.fitWithin(w, h, max);
+  ck(`fitWithin(${w},${h},${max}) = ${ew}x${eh}`, r.width === ew && r.height === eh, JSON.stringify(r));
+}
+ck("fitWithin respects the cap and preserves aspect", (() => {
+  const r = u.fitWithin(4000, 3000, 800);
+  return Math.max(r.width, r.height) <= 800 && near(r.width / r.height, 4 / 3, 0.01);
+})());
+ck("fitWithin never upscales", eq(u.fitWithin(50, 40, 1000), { width: 50, height: 40 }), JSON.stringify(u.fitWithin(50, 40, 1000)));
+ck("uid is unique across 1000 calls", new Set(Array.from({ length: 1000 }, () => u.uid())).size === 1000);
+
+/* ══════════════════════════ 13. Word Counter ═══════════════════════════════ */
+
+console.log("\n13. Word Counter");
+const t1 = "The quick brown fox jumps over the lazy dog. The fox runs fast!";
+const s1 = wcStats(t1);
+ck("counts words", s1.words === 13, String(s1.words));
+ck("counts characters with spaces", s1.chars === t1.length);
+ck("counts characters without spaces", s1.charsNoSpace === t1.replace(/\s/g, "").length);
+ck("counts sentences", s1.sentences === 2, String(s1.sentences));
+ck("counts paragraphs", s1.paragraphs === 1, String(s1.paragraphs));
+ck("avg sentence = words/sentences", near(s1.avgSentence, 13 / 2, 1e-9));
+ck("reading time = words/200", near(s1.readingMin, 13 / 200, 1e-9));
+ck("speaking time = words/130", near(s1.speakingMin, 13 / 130, 1e-9));
+ck("finds the longest word", s1.longest.length === 5);
+ck("filters stop words out of the keyword list", !s1.top.some(([w]) => w === "the"), JSON.stringify(s1.top));
+ck("counts keyword frequency", s1.top.some(([w, n]) => w === "fox" && n === 2), JSON.stringify(s1.top));
+ck("caps the keyword list at 8", s1.top.length <= 8);
+const e = wcStats("");
+ck("empty text → zeros, no NaN/Infinity", e.words === 0 && e.chars === 0 && e.sentences === 0 && e.paragraphs === 0
+  && e.avgSentence === 0 && Number.isFinite(e.readingMin) && Number.isFinite(e.speakingMin) && e.longest === "" && e.top.length === 0);
+ck("whitespace-only → 0 words and 0 paragraphs", wcStats("   \n\n  \t ").words === 0 && wcStats("   \n\n  \t ").paragraphs === 0);
+ck("collapses repeated spaces between words", wcStats("too    many     spaces   between   words").words === 5);
+ck("counts multiple paragraphs", wcStats("One.\n\nTwo.\n\n\nThree.").paragraphs === 3, String(wcStats("One.\n\nTwo.\n\n\nThree.").paragraphs));
+ck("counts unicode words", wcStats("زکات کیلکولیٹر مفت آن لائن").words === 5, String(wcStats("زکات کیلکولیٹر مفت آن لائن").words));
+
+/* ═════════ 14. PNG engine — palette maths, colour census, honest copy ═══════
+   The user-reported "PNG Compressor gives 0%" had two independent causes:
+   (a) a genuine 0% on PNGs that are already palette-encoded, reported with the
+       same vague wording as (b) the engine failing to load and the browser
+       fallback producing a LARGER file. Both are now distinguishable.        */
+
+console.log("\n14. PNG — pngColorsForQuality");
+ck("quality 100 → 256 colours", png.pngColorsForQuality(100) === 256);
+ck("quality 96 → 256 colours", png.pngColorsForQuality(96) === 256);
+ck("quality 80 → 205 colours (the documented default)", png.pngColorsForQuality(80) === 205, String(png.pngColorsForQuality(80)));
+ck("never drops below a 16-colour palette", [0, 1, 2, 5, 6, 7, 8, 10, 50].every((q) => png.pngColorsForQuality(q) >= 16));
+ck("low quality floors at exactly 16 colours", [0, 1, 2, 5, 6].every((q) => png.pngColorsForQuality(q) === 16), [0, 1, 2, 5, 6].map((q) => png.pngColorsForQuality(q)).join(","));
+ck("never exceeds 256", [100, 200, 1e6].every((q) => png.pngColorsForQuality(q) <= 256));
+ck("monotonic in quality", Array.from({ length: 100 }, (_, i) => png.pngColorsForQuality(i + 1))
+  .every((v, i, a) => i === 0 || v >= a[i - 1]));
+
+console.log("15. PNG — countColours (the colour census behind the 0% message)");
+const rgbaOf = (cols, repeats) => {
+  const out = new Uint8ClampedArray(cols.length * repeats * 4);
+  for (let r = 0; r < repeats; r++) cols.forEach(([R, G, B, A], i) => {
+    const o = (r * cols.length + i) * 4;
+    out[o] = R; out[o + 1] = G; out[o + 2] = B; out[o + 3] = A;
+  });
+  return out;
+};
+const four = png.countColours(rgbaOf([[0, 0, 0, 255], [255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]], 40));
+ck("counts 4 distinct colours exactly", eq(four, { exact: true, count: 4 }), JSON.stringify(four));
+const solid = png.countColours(rgbaOf([[12, 34, 56, 255]], 1000));
+ck("a solid fill is 1 colour", eq(solid, { exact: true, count: 1 }), JSON.stringify(solid));
+const alpha = png.countColours(rgbaOf([[10, 20, 30, 255], [10, 20, 30, 128]], 5));
+ck("alpha is part of the key (transparency is not merged away)", eq(alpha, { exact: true, count: 2 }), JSON.stringify(alpha));
+const distinct = (n) => {
+  const out = new Uint8ClampedArray(n * 4);
+  for (let i = 0; i < n; i++) { out[i * 4] = i & 255; out[i * 4 + 1] = (i >> 8) & 255; out[i * 4 + 2] = (i >> 4) & 255; out[i * 4 + 3] = 255; }
+  return out;
+};
+const many = png.countColours(distinct(4000));
+ck("bails out early instead of counting millions of photo colours", many.exact === false && many.count === 513, JSON.stringify(many));
+ck("the census stops at the cap, not at the end of the image", png.countColours(distinct(100000)).count === 513);
+ck("a 256-shade greyscale ramp is still counted exactly", eq(png.countColours(distinct(256)), { exact: true, count: 256 }), JSON.stringify(png.countColours(distinct(256))));
+ck("the census cap is above 256 so real palette PNGs are reported exactly", png.countColours(rgbaOf(Array.from({ length: 256 }, (_, i) => [i, i, i, 255]), 3)).exact === true);
+ck("empty data → 0 colours, exact", eq(png.countColours(new Uint8ClampedArray(0)), { exact: true, count: 0 }));
+
+console.log("16. PNG — noSavingsNote (must never look like a broken tool)");
+const NOTES = [
+  ["jpg output", png.noSavingsNote({ type: "image/jpeg", strategy: "smart", colours: null })],
+  ["png lossless", png.noSavingsNote({ type: "image/png", strategy: "lossless", colours: null })],
+  ["png smart, 4 colours", png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: true, count: 4 } })],
+  ["png smart, 1 colour", png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: true, count: 1 } })],
+  ["png smart, 256 colours", png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: true, count: 256 } })],
+  ["png smart, 300 colours", png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: true, count: 300 } })],
+  ["png smart, census unavailable", png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: false, count: 513 } })],
+  ["png smart, no census", png.noSavingsNote({ type: "image/png", strategy: "smart", colours: null })],
+];
+for (const [label, note] of NOTES) {
+  ck(`${label}: is a non-empty sentence`, typeof note === "string" && note.length > 30, String(note));
+  ck(`${label}: names an actionable lever`, /resize|dimension|webp|smart png/i.test(note), note);
+  ck(`${label}: never claims a saving`, !/saved|\d+%|success/i.test(note), note);
+  ck(`${label}: never leaks undefined/NaN`, !/undefined|NaN|\[object/.test(note), note);
+}
+ck("a 4-colour PNG says WHY: '4 distinct colours'", /4 distinct colours/.test(png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: true, count: 4 } })));
+ck("1 colour is grammatically singular", /1 distinct colour[^s]/.test(png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: true, count: 1 } })));
+ck("lossless mode points at Smart PNG", /smart png/i.test(png.noSavingsNote({ type: "image/png", strategy: "lossless", colours: null })));
+ck("the two 0% causes read differently (lossless vs palette)",
+  png.noSavingsNote({ type: "image/png", strategy: "lossless", colours: null }) !==
+  png.noSavingsNote({ type: "image/png", strategy: "smart", colours: { exact: true, count: 4 } }));
+ck("non-PNG output does not talk about palettes", !/palette|colours/.test(png.noSavingsNote({ type: "image/jpeg", strategy: "smart", colours: null })));
+
+console.log("17. PNG — every engine lists a mirror on a different host");
+for (const [name, sources] of [["PAKO_SRCS", png.PAKO_SRCS], ["UPNG_SRCS", png.UPNG_SRCS]]) {
+  const hosts = new Set(sources.map((s) => new URL(s).host));
+  ck(`${name} has ≥2 sources`, sources.length >= 2, sources.join(", "));
+  ck(`${name} spans ≥2 distinct CDN hosts`, hosts.size >= 2, [...hosts].join(", "));
+  ck(`${name} are all https`, sources.every((s) => s.startsWith("https://")));
+  ck(`${name} pin an exact version`, sources.every((s) => /\d+\.\d+\.\d+/.test(s)));
+}
+
+/* ═══════════════ 18. friendlyError — no raw internals in the UI ═════════════ */
+
+console.log("\n18. friendlyError");
+const FE = [
+  ["a password-protected PDF", "Error: InvalidPDFException: Password required to decrypt", /password-protected/i],
+  ["a blocked CDN download", "A required library failed to download. Check your connection or ad-blocker.", /could not be downloaded/i],
+  ["a network failure", "TypeError: Failed to fetch", /could not be downloaded/i],
+  ["an oversized file", "QuotaExceededError: storage quota exceeded", /too large/i],
+  ["a denied permission", "NotAllowedError: Permission denied by user", /browser blocked|permission/i],
+  ["a tainted canvas", "SecurityError: The canvas has been tainted", /security reasons/i],
+  ["a cancelled job", "AbortError: The operation was aborted", /cancelled/i],
+  ["an un-drawable glyph", "WinAnsi cannot encode U+0627", /cannot draw/i],
+];
+for (const [label, message, want] of FE) {
+  ck(`${label} → actionable text`, want.test(u.friendlyError(new Error(message))), u.friendlyError(new Error(message)));
+}
+ck("an empty error uses the fallback", u.friendlyError(new Error("")) === "Something went wrong. Please try again.");
+ck("null/undefined use the fallback", u.friendlyError(null) === "Something went wrong. Please try again." && u.friendlyError(undefined) === "Something went wrong. Please try again.");
+ck("a caller-supplied fallback wins over the default", u.friendlyError(new Error(""), "Resize failed.") === "Resize failed.");
+ck("a short real message passes through verbatim", u.friendlyError(new Error("No pages matched")) === "No pages matched");
+ck("a 300-char stack fragment is replaced, not shown", u.friendlyError(new Error("x".repeat(300))).length < 180, String(u.friendlyError(new Error("x".repeat(300))).length));
+ck("a thrown string (not an Error) is handled", u.friendlyError("boom") === "boom");
+ck("an object without a message does not render [object Object]", !/\[object Object\]/.test(u.friendlyError({})));
+ck("never returns an empty string", ["", null, undefined, {}, new Error(""), 0, false].every((v) => u.friendlyError(v).length > 0));
+ck("'unsupported image format' is NOT misreported as a font problem", !/font cannot draw/i.test(u.friendlyError(new Error("unsupported image format"))), u.friendlyError(new Error("unsupported image format")));
+
+/* ══════ 19. Config guard: every CDN origin used in code must be preconnected ═
+   Regression: components load pako/UPNG/lamejs/gif.js from cdnjs.cloudflare.com
+   but CDN_ORIGINS only listed esm.sh and cdn.jsdelivr.net.                 */
+
+console.log("\n19. CDN preconnect coverage");
+const site = await import("data:text/javascript," + encodeURIComponent(src("lib/site.js")));
+const hostsUsed = new Set();
+for (const rel of ["components/tools/ImageCompressor.js", "components/tools/audioPack.js", "components/tools/videoPack.js",
+                   "components/tools/imageDevPack.js", "components/tools/quickTools.js", "components/tools/pdfTools.js",
+                   "components/tools/miscPack2.js", "components/tools/BackgroundRemover.js", "components/tools/ImageEnhancer.js",
+                   "components/tools/growthTools.js", "components/tools/pdfEssentials.js", "components/tools/SignPdf.js"]) {
+  for (const m of src(rel).matchAll(/https:\/\/([a-z0-9.-]+)\//g)) hostsUsed.add(m[1]);
+}
+const preconnected = new Set(site.CDN_ORIGINS.map((o) => new URL(o).host));
+console.log(`   hosts used by tools: ${[...hostsUsed].sort().join(", ")}`);
+console.log(`   preconnected       : ${[...preconnected].sort().join(", ")}`);
+for (const host of hostsUsed) {
+  ck(`${host} is preconnected`, preconnected.has(host), `add it to CDN_ORIGINS in lib/site.js`);
+}
+ck("CDN_ORIGINS are all https", site.CDN_ORIGINS.every((o) => o.startsWith("https://")));
+
+/* ══════════════════════════════ report ══════════════════════════════════════ */
+
+const total = pass + fails.length;
+console.log(`\n${"═".repeat(66)}`);
+console.log(`  ${pass}/${total} assertions passed${fails.length ? `, ${fails.length} FAILED` : " — all green"}`);
+console.log("═".repeat(66));
+if (fails.length) {
+  console.log("\nFAILURES:\n");
+  fails.forEach((f) => console.log("  ✗ " + f));
+  process.exitCode = 1;
+}

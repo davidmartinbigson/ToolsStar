@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, stripExt, loadImage, renderToBlob, fitWithin } from "@/lib/utils";
+import { formatBytes, downloadBlob, stripExt, loadImage, renderToBlob, fitWithin, friendlyError } from "@/lib/utils";
 
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
@@ -127,7 +127,7 @@ export default function ImageEnhancer() {
       const loaded = await loadImage(f);
       setItem({ file: f, ...loaded });
     } catch (e) {
-      setError(e.message);
+      setError(friendlyError(e, "Could not read that image."));
     }
   }, []);
 
@@ -298,7 +298,7 @@ export default function ImageEnhancer() {
         setStage("");
         setProgress(null);
       } else {
-        setError(e.message || "Enhancement failed. Try a smaller input size.");
+        setError(friendlyError(e, "Enhancement failed. Try a smaller input size."));
         setStage("");
         setProgress(null);
       }

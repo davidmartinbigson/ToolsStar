@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, downloadZip, stripExt, loadImage, uid, loadScript } from "@/lib/utils";
+import { formatBytes, downloadBlob, downloadZip, stripExt, loadImage, uid, loadScript, friendlyError } from "@/lib/utils";
 
 const btnP = "inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:opacity-60";
 const btnG = "inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-extrabold text-[#032114] shadow-xl shadow-emerald-500/20 transition hover:bg-emerald-300 disabled:opacity-60";
@@ -33,7 +33,7 @@ export function ImageCropper() {
 
   const add = useCallback(async (files) => {
     setError(""); setResult(null);
-    try { const it = { file: files[0], ...(await loadImage(files[0])) }; setItem(it); fitInitial(it); } catch (e) { setError(e.message); }
+    try { const it = { file: files[0], ...(await loadImage(files[0])) }; setItem(it); fitInitial(it); } catch (e) { setError(friendlyError(e, "Could not read that image. Try a different file.")); }
   }, [fitInitial]);
 
   useEffect(() => {
@@ -228,7 +228,7 @@ export function ImageToText() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
 
-  const add = useCallback(async (files) => { setError(""); setText(""); try { setItem({ file: files[0], ...(await loadImage(files[0])) }); } catch (e) { setError(e.message); } }, []);
+  const add = useCallback(async (files) => { setError(""); setText(""); try { setItem({ file: files[0], ...(await loadImage(files[0])) }); } catch (e) { setError(friendlyError(e, "Could not read that image. Try a different file.")); } }, []);
 
   const sample = async () => {
     const c = document.createElement("canvas"); c.width = 900; c.height = 420;
@@ -258,7 +258,7 @@ export function ImageToText() {
       });
       if (!data.text.trim()) throw new Error("No readable text found. Try a sharper, straight, well-lit photo of the document.");
       setText(data.text.trim()); setStage("Done — edit anything below, then copy or download.");
-    } catch (e) { setError(e.message || "OCR failed in this browser. Try Chrome/Edge on desktop."); setStage(""); setPct(null); }
+    } catch (e) { setError(friendlyError(e, "OCR failed in this browser. Try Chrome/Edge on desktop.")); setStage(""); setPct(null); }
     finally { setBusy(false); }
   };
 

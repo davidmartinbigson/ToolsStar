@@ -64,19 +64,35 @@ const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.
 const longDate = (date) => `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 
 /* ═══════════════════════════ AGE CALCULATOR ═══════════════════════════ */
+/* Add whole months, clamping to the last day of the target month so a start
+   date of the 29th/30th/31st can never spill into the following month. */
+function addMonthsClamped(date, months) {
+  const first = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  const lastDay = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  return new Date(first.getFullYear(), first.getMonth(), Math.min(date.getDate(), lastDay));
+}
+
+/* Whole years, then whole months, then leftover days — each step measured
+   against a clamped anchor date. The old version borrowed exactly one month
+   and added its length, so whenever the start day exceeded that month's
+   length the remainder stayed negative (31 Jan → 1 Mar reported
+   "0 years, 1 month, -2 days"). Anchoring instead guarantees
+   0 ≤ days ≤ 31, 0 ≤ months ≤ 11 and that from + (y, m, d) lands exactly
+   back on `to`. */
 function diffYmd(from, to) {
-  let years = to.getFullYear() - from.getFullYear();
-  let months = to.getMonth() - from.getMonth();
-  let days = to.getDate() - from.getDate();
-  if (days < 0) {
-    months -= 1;
-    // days left in the month BEFORE `to`
-    days += new Date(to.getFullYear(), to.getMonth(), 0).getDate();
-  }
-  if (months < 0) {
-    years -= 1;
-    months += 12;
-  }
+  const a = startOfDay(from);
+  const b = startOfDay(to);
+  if (b <= a) return { years: 0, months: 0, days: 0 };
+
+  let years = b.getFullYear() - a.getFullYear();
+  if (addMonthsClamped(a, years * 12) > b) years -= 1;
+
+  const anchor = addMonthsClamped(a, years * 12);
+  let months = (b.getFullYear() - anchor.getFullYear()) * 12 + (b.getMonth() - anchor.getMonth());
+  if (addMonthsClamped(anchor, months) > b) months -= 1;
+
+  const base = addMonthsClamped(anchor, months);
+  const days = Math.round((b - base) / 86400000);
   return { years, months, days };
 }
 

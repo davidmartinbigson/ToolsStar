@@ -78,7 +78,7 @@ npm install
 npm run dev        # development → http://localhost:3000
 npm run build      # production build
 npm run start      # production server
-npm test           # 237 assertions over the tools' pure logic (no framework)
+npm test           # 511 assertions over the tools' pure logic (no framework)
 npm run test:watch # re-run on every save
 ```
 
@@ -120,6 +120,16 @@ add one entry to `lib/articles.js`, and it appears on `/blog`, in the sitemap,
 in the homepage rail and — via the "Tested guide" link — on the tool page it
 covers. `npm test` enforces the quality bar (length, structure, FAQs, tool link,
 hero image on disk with alt text) so a thin guide can never ship.
+
+Guides alone are only half the fix — reviewers sample the tool pages
+themselves. So the thinnest tool pages also carry a **deep dive**: two to four
+sections of real prose ("what splitting actually does inside a PDF", "why GIFs
+are so heavy", "browser trimming is a re-encode, not a cut") written from the
+behaviour of the code, including honest limits and when to choose something
+else. Deep dives are data in `lib/toolGuides.js`, rendered by `ToolShell`
+between the features list and the FAQ, and test section 21 enforces their word
+floor plus a site-wide floor so no tool page can regress to interface-only
+copy.
 
 ## 4. Deploy FREE (recommended: Vercel)
 
@@ -187,8 +197,10 @@ lib/
 content/blog/         Guide bodies as block arrays (one file per guide)
 lib/articles.js       Editorial catalog — feeds /blog, the sitemap and the
                       "Tested guide" rail that appears on matching tool pages
+lib/toolGuides.js     Deep-dive prose for the thinnest tool pages, rendered
+                      by ToolShell between features and FAQ
 tests/
-  logic.test.mjs      382 assertions over the tools' pure logic — `npm test`
+  logic.test.mjs      511 assertions over the tools' pure logic — `npm test`
   alias-loader.mjs    Lets plain Node resolve the repo's "@/…" alias
   pureSource.mjs      Marker-based extractor: slices pure functions out of the
                       real "use client" files so tests can never drift

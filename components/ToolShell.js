@@ -10,7 +10,7 @@ import { SITE_URL } from "@/lib/site";
 // breadcrumb → H1 → the tool → how-to steps → features → FAQ → related tools.
 // Emits SoftwareApplication + HowTo + FAQPage JSON-LD for rich Google results.
 
-export default function ToolShell({ tool, intro, steps, features, faqs, children }) {
+export default function ToolShell({ tool, intro, steps, features, faqs, deepDive, children }) {
   const url = `${SITE_URL}/tools/${tool.slug}`;
   // Editorial cross-link: tools with a measured guide get a visible rail to it,
   // and the guide links back. Reviewers (and readers) should never hit a
@@ -156,6 +156,33 @@ export default function ToolShell({ tool, intro, steps, features, faqs, children
             ))}
           </ul>
         </section>
+      )}
+
+      {/* Editorial deep-dive: real prose about how the tool works and where
+          its limits are. Supplied per-tool from lib/toolGuides.js. */}
+      {deepDive?.length > 0 && (
+        <div className="mt-14 space-y-10">
+          {deepDive.map((s) => (
+            <section key={s.h} aria-label={s.h}>
+              <h2 className="text-2xl font-extrabold tracking-tight text-white">{s.h}</h2>
+              {s.p?.map((para, i) => (
+                <p key={i} className="mt-4 max-w-4xl text-[15px] leading-relaxed text-slate-400">
+                  {para}
+                </p>
+              ))}
+              {s.bullets?.length > 0 && (
+                <ul className="mt-5 grid gap-2.5 sm:grid-cols-2">
+                  {s.bullets.map((b) => (
+                    <li key={b} className="flex items-start gap-2.5 rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 py-3 text-sm text-slate-300">
+                      <Icon name="check" size={17} className="mt-0.5 shrink-0 text-cyan-400" strokeWidth={2.2} />
+                      {b}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
+        </div>
       )}
 
       {/* FAQ */}

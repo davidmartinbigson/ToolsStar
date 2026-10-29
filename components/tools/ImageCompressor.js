@@ -3,11 +3,22 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, savedPct, downloadBlob, stripExt, loadImage, loadScript, renderToBlob, fitWithin, uid } from "@/lib/utils";
+import { formatBytes, savedPct, downloadBlob, stripExt, loadImage, loadScriptAny, renderToBlob, fitWithin, uid, friendlyError } from "@/lib/utils";
 
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-const PAKO_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js";
-const UPNG_SRC = "https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js";
+
+/* Each engine lists a mirror. With only cdnjs, an ad-blocker or a CDN outage
+   silently downgraded PNG compression to the browser's own encoder — which
+   usually produces a LARGER file — and the tool then reported "0% saved" with
+   no way to tell that apart from a genuinely optimal PNG. */
+const PAKO_SRCS = [
+  "https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js",
+  "https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js",
+];
+const UPNG_SRCS = [
+  "https://cdnjs.cloudflare.com/ajax/libs/upng-js/2.1.0/UPNG.min.js",
+  "https://cdn.jsdelivr.net/npm/upng-js@2.1.0/UPNG.js",
+];
 
 const MODE_COPY = {
   all: { drop: "Drop images to compress", hint: "JPG, PNG or WebP — add up to 50 at once" },
@@ -22,10 +33,22 @@ function loadPngEngine() {
   }
   if (pngEnginePromise) return pngEnginePromise;
   pngEnginePromise = (async () => {
-    await loadScript(PAKO_SRC);
-    await loadScript(UPNG_SRC);
-    if (!window.UPNG?.encode || !window.pako?.deflate) {
-      throw new Error("PNG compression engine did not start.");
+    // pako first: UPNG reaches for window.pako.deflate when it encodes.
+    const engines = [["pako", PAKO_SRCS, () => window.pako?.deflate], ["UPNG", UPNG_SRCS, () => window.UPNG?.encode]];
+    const missing = [];
+    for (const [name, sources, present] of engines) {
+      try {
+        await loadScriptAny(sources);
+      } catch {
+        // fall through — `present()` is the only result that matters
+      }
+      if (!present()) missing.push(name);
+    }
+    if (missing.length) {
+      throw new Error(
+        `The PNG compression engine (${missing.join(" + ")}) could not be loaded from any mirror. ` +
+          "Allow cdnjs.cloudflare.com and cdn.jsdelivr.net — an ad-blocker, a strict firewall or being offline usually causes this — then try again."
+      );
     }
     return window.UPNG;
   })().catch((e) => {
@@ -62,12 +85,65 @@ function canvasPngBlob(canvas) {
 
 const letUiPaint = () => new Promise((resolve) => setTimeout(resolve, 10));
 
+/* Distinct colours in the rendered pixels, bailing out early once we know a
+   smaller palette cannot help. Measured against the real UPNG build: when a PNG
+   already has few colours, UPNG writes it as a palette PNG even with cnum = 0
+   (lossless), so asking for fewer colours returns a byte-identical file. That
+   is a genuine 0% — this census is what lets us say so specifically. */
+function countColours(data, cap = 512) {
+  const seen = new Set();
+  for (let i = 0; i < data.length; i += 4) {
+    seen.add((data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | data[i + 3]);
+    if (seen.size > cap) return { exact: false, count: seen.size };
+  }
+  return { exact: true, count: seen.size };
+}
+
+/* Honest wording for "re-encoding did not produce a smaller file" — the vague
+   "Already well optimized" made a genuine 0% indistinguishable from a broken
+   engine, which is why PNG compression looked like it was doing nothing. */
+function noSavingsNote({ type, strategy, colours }) {
+  if (type !== "image/png") {
+    return "Already well optimized — re-encoding did not produce a smaller file, so the original was kept. Lower the quality, set a smaller max dimension, or switch to WebP."
+  }
+  if (strategy === "lossless") {
+    return "Already optimized — lossless PNG keeps identical pixels, so this file cannot shrink further. Try Smart PNG, a smaller max dimension, or WebP.";
+  }
+  if (colours?.exact && colours.count <= 256) {
+    const c = colours.count;
+    return `Already optimal — this PNG holds only ${c} distinct colour${c === 1 ? "" : "s"} and is already stored as a compact palette, so fewer colours cannot shrink it. Resize it or convert to WebP for a real reduction.`;
+  }
+  return "Already well optimized — the re-encoded file was not smaller, so the original was kept. Resize it or convert to WebP for a real reduction.";
+}
+
 async function encodePngBlob(item, width, height, { strategy, quality }) {
   const { canvas, ctx } = drawImageCanvas(item.img, width, height);
+  // Without the palette encoder the browser's own PNG output is usually LARGER
+  // than the source, so the fallback is only acceptable when it still does
+  // useful work (a resize, or a conversion from another format).
+  const resized = width !== item.width || height !== item.height;
+  const converted = item.file.type !== "image/png";
+  const browserFallback = async (note) => {
+    const blob = await canvasPngBlob(canvas);
+    if (resized || converted || blob.size < item.file.size) {
+      return { blob, note, colours: null, degraded: true };
+    }
+    return null;
+  };
+
+  let UPNG;
   try {
-    const UPNG = await loadPngEngine();
+    UPNG = await loadPngEngine();
+  } catch (e) {
+    const ok = await browserFallback("Compressed with the browser's PNG encoder — the faster engine could not load");
+    if (ok) return ok;
+    throw e; // surfaces the mirror/ad-blocker explanation on the file itself
+  }
+
+  try {
     await letUiPaint();
-    const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer;
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const rgba = pixels.data.buffer;
     const candidates = [];
     const encodeWith = (colors, note) => {
       // UPNG may retain/use the supplied buffer during encoding, so each
@@ -89,10 +165,10 @@ async function encodePngBlob(item, width, height, { strategy, quality }) {
       // If palette compression did not help much (or this is a conversion to
       // PNG, where comparing with the source size is not meaningful), also
       // try a fully lossless UPNG candidate and keep whichever is smaller.
-      const pixels = canvas.width * canvas.height;
+      const pixelCount = canvas.width * canvas.height;
       const shouldTryLossless = item.file.type === "image/png"
         ? smart.blob.size >= item.file.size * 0.9
-        : pixels <= 4_000_000;
+        : pixelCount <= 4_000_000;
       if (shouldTryLossless) {
         await letUiPaint();
         candidates.push(encodeWith(0, "Lossless PNG optimized"));
@@ -100,10 +176,15 @@ async function encodePngBlob(item, width, height, { strategy, quality }) {
     }
 
     candidates.sort((a, b) => a.blob.size - b.blob.size);
-    return candidates[0];
+    const best = candidates[0];
+    // Pay for the colour census only when we are about to report no savings.
+    const colours = !converted && best.blob.size >= item.file.size ? countColours(pixels.data) : null;
+    return { blob: best.blob, note: best.note, colours, degraded: false };
   } catch (e) {
-    console.warn("UPNG PNG compression unavailable; using browser PNG encoder.", e);
-    return { blob: await canvasPngBlob(canvas), note: "PNG optimized" };
+    console.warn("UPNG encode failed; trying the browser PNG encoder.", e);
+    const ok = await browserFallback("Compressed with the browser's PNG encoder");
+    if (ok) return ok;
+    throw new Error(friendlyError(e, "PNG encoding failed — the image may be too large for this browser."));
   }
 }
 
@@ -147,9 +228,10 @@ export default function ImageCompressor({ mode = "all" }) {
       const { width, height } = fitWithin(item.width, item.height, maxDim);
       let blob;
       let note = "";
+      let png = null;
 
       if (type === "image/png") {
-        const png = await encodePngBlob(item, width, height, { strategy: pngStrategy, quality });
+        png = await encodePngBlob(item, width, height, { strategy: pngStrategy, quality });
         blob = png.blob;
         note = png.note;
       } else {
@@ -168,9 +250,8 @@ export default function ImageCompressor({ mode = "all" }) {
         return {
           result: item.file,
           outName: item.file.name,
-          note: type === "image/png" && pngStrategy === "lossless"
-            ? "Already optimized — a lossless PNG cannot shrink this file further"
-            : "Already well optimized — original kept",
+          note: noSavingsNote({ type, strategy: pngStrategy, colours: png?.colours }),
+          kept: true,
         };
       }
       return { result: blob, outName: `${stripExt(item.file.name)}-compressed.${EXT[type]}`, note };
@@ -193,7 +274,8 @@ export default function ImageCompressor({ mode = "all" }) {
           )
         );
       } catch (e) {
-        setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: "error", note: e.message } : it)));
+        const note = friendlyError(e, "Compression failed for this image.");
+        setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, status: "error", note } : it)));
       }
     }
     setBusy(false);
@@ -238,7 +320,9 @@ export default function ImageCompressor({ mode = "all" }) {
     const done = items.filter((i) => i.status === "done" && i.result);
     const before = done.reduce((s, i) => s + i.file.size, 0);
     const after = done.reduce((s, i) => s + i.result.size, 0);
-    return { count: done.length, before, after, pct: savedPct(before, after) };
+    // `kept` counts files where no smaller version existed, so the banner can
+    // say "originals kept" instead of implying the tool achieved nothing.
+    return { count: done.length, before, after, pct: savedPct(before, after), kept: done.filter((i) => i.result === i.file).length };
   }, [items]);
 
   const hasPngInput = items.some((i) => i.file.type === "image/png" || /\.png$/i.test(i.file.name));
@@ -370,17 +454,34 @@ export default function ImageCompressor({ mode = "all" }) {
 
           {/* totals */}
           {totals.count > 0 && (
-            <div className="mt-5 rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.06] p-4" role="status">
+            <div
+              className={`mt-5 rounded-2xl border p-4 ${totals.pct > 0 ? "border-emerald-400/25 bg-emerald-400/[0.06]" : "border-amber-400/25 bg-amber-400/[0.06]"}`}
+              role="status"
+            >
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="font-semibold text-white">
                   Total: <span className="text-rose-300 line-through decoration-rose-400/60">{formatBytes(totals.before)}</span>
-                  {" → "}<span className="text-emerald-300 font-extrabold">{formatBytes(totals.after)}</span>
+                  {" → "}
+                  <span className={totals.pct > 0 ? "text-emerald-300 font-extrabold" : "text-amber-300 font-extrabold"}>{formatBytes(totals.after)}</span>
                 </span>
-                <span className="rounded-full bg-emerald-400 px-3 py-1 text-xs font-extrabold text-[#032114]">You saved {totals.pct}%</span>
+                {totals.pct > 0 ? (
+                  <span className="rounded-full bg-emerald-400 px-3 py-1 text-xs font-extrabold text-[#032114]">You saved {totals.pct}%</span>
+                ) : (
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-amber-200">
+                    {totals.kept === totals.count ? "No smaller version exists — originals kept" : "No net saving on these files"}
+                  </span>
+                )}
               </div>
-              <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white/[0.08]">
-                <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 transition-all duration-700" style={{ width: `${Math.max(2, 100 - totals.pct)}%` }} />
-              </div>
+              {totals.pct > 0 && (
+                <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white/[0.08]">
+                  <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 transition-all duration-700" style={{ width: `${Math.max(2, 100 - totals.pct)}%` }} />
+                </div>
+              )}
+              {totals.pct === 0 && totals.kept === totals.count && (
+                <p className="mt-2 text-xs text-slate-400">
+                  These PNGs are already stored efficiently. To shrink them further, set a smaller <strong className="text-slate-200">Max dimension</strong> or switch the output format to <strong className="text-slate-200">WebP</strong>.
+                </p>
+              )}
             </div>
           )}
 

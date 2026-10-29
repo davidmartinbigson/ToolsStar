@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, loadScript, stripExt } from "@/lib/utils";
+import { formatBytes, downloadBlob, loadScript, stripExt, friendlyError } from "@/lib/utils";
 
 const btnPrimary = "inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60";
 const btnGreen = "inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-extrabold text-[#032114] shadow-xl shadow-emerald-500/20 transition hover:bg-emerald-300 disabled:opacity-60";
@@ -254,7 +254,7 @@ function AudioEditor({ mode }) {
       setEnd(ringtone ? Math.min(buffer.duration, 30) : buffer.duration);
       setCurrent(0);
     } catch (error) {
-      setError(error.message);
+      setError(friendlyError(error, "Could not read that audio file. Try MP3, WAV, M4A or OGG."));
       bufferRef.current = null;
     } finally {
       setLoading(false);
@@ -314,7 +314,7 @@ function AudioEditor({ mode }) {
       const name = ringtone ? `${stripExt(file.name)}-ringtone.mp3` : `${stripExt(file.name)}-cut.mp3`;
       setResult({ blob, url: URL.createObjectURL(blob), name });
     } catch (error) {
-      setError(error.message || "MP3 export failed in this browser.");
+      setError(friendlyError(error, "MP3 export failed in this browser."));
       setPct(null); setStage("");
     } finally {
       setBusy(false);
@@ -454,7 +454,7 @@ export function AudioCompressor() {
       bufferRef.current = buffer;
       setMeta({ duration: buffer.duration, channels: buffer.numberOfChannels, sampleRate: buffer.sampleRate });
     } catch (error) {
-      setError(error.message);
+      setError(friendlyError(error, "Could not read that audio file. Try MP3, WAV, M4A or OGG."));
       bufferRef.current = null;
     } finally { setLoading(false); }
   }, []);
@@ -469,7 +469,7 @@ export function AudioCompressor() {
       });
       setResult({ blob, url: URL.createObjectURL(blob), name: `${stripExt(file.name)}-compressed.mp3` });
     } catch (error) {
-      setError(error.message || "Audio compression failed in this browser.");
+      setError(friendlyError(error, "Audio compression failed in this browser."));
       setPct(null); setStage("");
     } finally { setBusy(false); }
   };
@@ -666,7 +666,7 @@ export function VoiceRecorder() {
       });
       setMp3({ blob, url: URL.createObjectURL(blob), name: `${stripExt(result.name)}.mp3` });
     } catch (error) {
-      setError(error.message || "MP3 conversion failed, but your original recording below is safe.");
+      setError(friendlyError(error, "MP3 conversion failed, but your original recording below is safe."));
       setPct(null); setStage("");
     } finally { setConverting(false); }
   };

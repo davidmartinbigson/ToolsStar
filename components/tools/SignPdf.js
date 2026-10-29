@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { downloadBlob, formatBytes, stripExt } from "@/lib/utils";
+import { downloadBlob, formatBytes, stripExt, friendlyError } from "@/lib/utils";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    SIGN PDF — draw, type or upload a signature, drag it onto a live preview of
@@ -49,13 +49,6 @@ function Alert({ msg }) {
 }
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-
-function friendlyError(error, fallback = "Could not process this PDF.") {
-  const message = String(error?.message || error || "");
-  if (/encrypt|password/i.test(message)) return "This PDF is password-protected. Remove its password first, then sign it.";
-  if (/failed to download|library/i.test(message)) return "The PDF library could not be downloaded. Check your connection or ad-blocker, then try again.";
-  return message && message.length < 180 ? message : fallback;
-}
 
 /** "2,4-6" → [1,3,4,5] (zero-based page indices), clamped to `count`. */
 function parsePageList(text, count) {
@@ -195,7 +188,10 @@ function pageGeometry(page) {
 /** Visual (top-left origin) point → PDF user-space point + text/image rotation. */
 function visualToUser(vx, vy, { W, H, R }) {
   if (R === 90) return { x: vy, y: vx, rotate: 90 };
-  if (R === 180) return { x: W - vx, y: H - vy, rotate: 180 };
+  // A 180° rotation flips BOTH axes relative to user space; flipping y again
+  // here mirrored the stamp about the page centre (it landed on the wrong
+  // half of every rotated page).
+  if (R === 180) return { x: W - vx, y: vy, rotate: 180 };
   if (R === 270) return { x: W - vy, y: H - vx, rotate: -90 };
   return { x: vx, y: H - vy, rotate: 0 };
 }
@@ -479,8 +475,10 @@ export default function SignPdf() {
         const vx = pos.x * geo.VW;
         const vy = pos.y * geo.VH;
 
-        const anchor = geo.R === 180 ? { x: vx, y: vy } : { x: vx, y: vy + vh };
-        const at = visualToUser(anchor.x, anchor.y, geo);
+        // pdf-lib anchors a drawing at its bottom-left in *user* space, so the
+        // visual point to map is the bottom edge of the stamp box. That holds
+        // for every rotation — visualToUser() does the axis flips.
+        const at = visualToUser(vx, vy + vh, geo);
         page.drawImage(png, {
           x: at.x,
           y: at.y,

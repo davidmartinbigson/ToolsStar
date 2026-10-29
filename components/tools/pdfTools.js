@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, savedPct, downloadBlob, downloadZip, stripExt, uid } from "@/lib/utils";
+import { formatBytes, savedPct, downloadBlob, downloadZip, stripExt, uid, friendlyError } from "@/lib/utils";
 
 /* ── shared loaders (CDN ES modules, nothing bundled → site stays light) ── */
 let _pdfLib = null;
@@ -20,10 +20,7 @@ async function pdfjs() {
   _pdfjs = lib;
   return lib;
 }
-const errText = (e) =>
-  /encrypt|password/i.test(e?.message || "")
-    ? "This PDF is password-protected. Remove the password first, then try again."
-    : "Could not read this PDF — it may be corrupted or in an unusual format.";
+const errText = (e) => friendlyError(e, "Could not read this PDF — it may be corrupted or in an unusual format.");
 
 function Alert({ msg }) {
   if (!msg) return null;
@@ -194,7 +191,7 @@ export function SplitPdf() {
         const blob = await build(src, nums, PDFDocument);
         setResults([{ name: mode === "remove" ? `${base}-cleaned.pdf` : `${base}-pages-${nums[0]}-${nums[nums.length - 1]}.pdf`, blob, url: URL.createObjectURL(blob) }]);
       }
-    } catch (e) { setError(e.message || errText(e)); } finally { setBusy(false); }
+    } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
 
   return (

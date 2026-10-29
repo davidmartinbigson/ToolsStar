@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, downloadZip, stripExt, loadImage, renderToBlob, uid } from "@/lib/utils";
+import { formatBytes, downloadBlob, downloadZip, stripExt, loadImage, renderToBlob, uid, friendlyError } from "@/lib/utils";
 
 const EXT = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 const btnP = "inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:opacity-60";
@@ -59,15 +59,23 @@ export function TargetKbCompressor() {
   const [format, setFormat] = useState("image/jpeg");
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
+  const [error, setError] = useState("");
   const [zipping, setZipping] = useState(false);
   const ref = useRef([]); ref.current = items;
 
   const add = useCallback(async (files) => {
     const fresh = [];
+    const skipped = [];
     for (const file of files.slice(0, 30)) {
-      try { fresh.push({ id: uid(), file, ...(await loadImage(file)), status: "ready", result: null }); } catch {}
+      // A file that cannot be decoded used to disappear without a word, which
+      // looks exactly like the dropzone ignoring the drop.
+      try { fresh.push({ id: uid(), file, ...(await loadImage(file)), status: "ready", result: null }); }
+      catch { skipped.push(file.name); }
     }
     setItems((p) => [...p, ...fresh]);
+    setError(skipped.length
+      ? `Could not read ${skipped.length} file${skipped.length === 1 ? "" : "s"}: ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}. Try JPG, PNG or WebP.`
+      : "");
   }, []);
 
   const run = async () => {
@@ -79,7 +87,10 @@ export function TargetKbCompressor() {
       try {
         const res = await fitToTarget(item, format, target);
         setItems((p) => p.map((x) => x.id === item.id ? { ...x, status: "done", result: { ...res, url: URL.createObjectURL(res.blob), name: `${stripExt(item.file.name)}-${targetKB}kb.${EXT[format]}` } } : x));
-      } catch { setItems((p) => p.map((x) => x.id === item.id ? { ...x, status: "error" } : x)); }
+      } catch (e) {
+        const why = friendlyError(e, `Could not fit ${item.file.name} under ${targetKB} KB.`);
+        setItems((p) => p.map((x) => x.id === item.id ? { ...x, status: "error", error: why } : x));
+      }
     }
     setStage(""); setBusy(false);
   };
@@ -112,6 +123,7 @@ export function TargetKbCompressor() {
             {done.length > 1 && <button disabled={zipping} onClick={async () => { setZipping(true); await downloadZip(done.map((d) => ({ blob: d.result.blob, name: d.result.name })), `toolsstars-${targetKB}kb-images.zip`); setZipping(false); }} className={btnG}><Icon name="download" size={17} /> {zipping ? "Zipping…" : "Download all as ZIP"}</button>}
             <button onClick={() => setItems([])} className={btnGhost}><Icon name="trash" size={15} /> Clear</button>
           </div>
+          {error && <p className="mt-3 text-xs font-semibold text-rose-300" role="alert">{error}</p>}
           {stage && <p className="mt-3 text-xs text-amber-300" role="status">{stage}</p>}
           <ul className="mt-6 space-y-3">
             {items.map((item) => (
@@ -122,7 +134,7 @@ export function TargetKbCompressor() {
                   <span className="block truncate text-sm font-semibold text-white">{item.file.name}</span>
                   <span className="text-xs text-slate-500">{item.width}×{item.height} · {formatBytes(item.file.size)}</span>
                   {item.status === "working" && <span className="block text-xs text-amber-300">Searching for the perfect fit…</span>}
-                  {item.status === "error" && <span className="block text-xs text-rose-300">Something went wrong with this file.</span>}
+                  {item.status === "error" && <span className="block text-xs text-rose-300">{item.error || "Something went wrong with this file."}</span>}
                 </span>
                 {item.result && (
                   <>
@@ -184,7 +196,7 @@ export function PassportPhotoMaker() {
 
   const add = useCallback(async (files) => {
     setError(""); setCutout(null); setZoom(1); setPos({ x: 50, y: 35 });
-    try { setItem({ file: files[0], ...(await loadImage(files[0])) }); } catch (e) { setError(e.message); }
+    try { setItem({ file: files[0], ...(await loadImage(files[0])) }); } catch (e) { setError(friendlyError(e, "Could not read that photo.")); }
   }, []);
 
   const aiBackground = async () => {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, loadImage, stripExt, uid } from "@/lib/utils";
+import { formatBytes, downloadBlob, loadImage, stripExt, uid, friendlyError } from "@/lib/utils";
 
 const btnPrimary = "inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60";
 const btnGreen = "inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-extrabold text-[#032114] shadow-xl shadow-emerald-500/20 transition hover:bg-emerald-300 disabled:opacity-60";
@@ -342,7 +342,7 @@ export function SignatureResizer() {
         }, type, 0.95);
       } catch (error) {
         setResult(null);
-        setError(error.message);
+        setError(friendlyError(error, "Could not render that signature. Try a different image."));
         setBusy(false);
       }
     }, 160);

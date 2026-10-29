@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, stripExt, loadScript } from "@/lib/utils";
+import { formatBytes, downloadBlob, stripExt, loadScript, friendlyError } from "@/lib/utils";
 
 const btnP = "inline-flex items-center gap-2 rounded-2xl bg-amber-400 px-6 py-3 font-extrabold text-[#241a00] shadow-xl shadow-amber-500/20 transition hover:bg-amber-300 disabled:opacity-60 disabled:cursor-not-allowed";
 const btnG = "inline-flex items-center gap-2 rounded-2xl bg-emerald-400 px-6 py-3 font-extrabold text-[#032114] shadow-xl shadow-emerald-500/20 transition hover:bg-emerald-300 disabled:opacity-60";
@@ -390,7 +390,7 @@ export function VideoToMp3() {
       const blob = new Blob(parts, { type: "audio/mpeg" });
       setResult({ blob, url: URL.createObjectURL(blob), name: `${stripExt(file.name)}.mp3`, dur: buffer.duration });
       setPct(100); setStage("Done — press play to check it!");
-    } catch (e) { setError(e.message); setStage(""); setPct(null); }
+    } catch (e) { setError(friendlyError(e, "That step failed. Try a different file, or a shorter clip.")); setStage(""); setPct(null); }
     finally { setBusy(false); }
   };
 

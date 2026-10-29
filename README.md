@@ -97,11 +97,29 @@ always run against the code that actually ships and cannot drift out of sync.
 | Sign PDF geometry | `visualToUser` round-trips 400 random points + all 4 corners for every `/Rotate` value |
 | PNG compression | palette maths, colour census, and every "no savings" message |
 | Shared helpers | `formatBytes`, `savedPct`, `stripExt`, `fitWithin`, `friendlyError` |
+| Editorial layer | every guide ≥800 words, ≥4 sections, ≥3 FAQs, linked to a real tool, hero on disk with alt text |
 | Config guards | every CDN host used in code is preconnected; every engine lists a mirror |
 
 **Not covered here:** the tools that need a real browser — video, canvas,
 WebAssembly, `MediaRecorder`, camera/microphone. Those have to be checked by
 hand (see §8).
+
+## 3b. The guides (`/blog`) — and why they are part of the product
+
+Tool-only sites are the category most often refused ad-network approval for
+"low value content": a page that is only inputs, buttons and a result box gives
+a reviewer nothing editorial to evaluate. So every high-demand tool here has a
+companion guide (1,100–1,700 rendered words each) that explains how it works,
+when it helps and where its limits are — with numbers from tests we ran
+ourselves, not figures copied from elsewhere.
+
+Guides are data (`content/blog/<slug>.js`) rendered by `components/ArticleShell.js`,
+so the table of contents, the reading time and the structured data are derived
+from the same source and cannot drift. Adding a guide: create the content file,
+add one entry to `lib/articles.js`, and it appears on `/blog`, in the sitemap,
+in the homepage rail and — via the "Tested guide" link — on the tool page it
+covers. `npm test` enforces the quality bar (length, structure, FAQs, tool link,
+hero image on disk with alt text) so a thin guide can never ship.
 
 ## 4. Deploy FREE (recommended: Vercel)
 
@@ -150,6 +168,8 @@ app/                  Pages + routing (App Router)
   sitemap.js robots.js opengraph-image.js
 components/
   diagrams.js         The animated homepage diagrams (pure CSS/SVG, 0 JS)
+  ArticleShell.js     Guide layout: hero, TOC, callouts, E-E-A-T author box,
+                      BlogPosting + BreadcrumbList + FAQPage JSON-LD
   ToolShell.js        SEO layout shared by every tool page (4 JSON-LD blocks + ad slot)
   LegalShell.js       Shared layout for the legal/informational pages
   Dropzone.js         Drag-drop / paste upload box
@@ -164,8 +184,12 @@ lib/
   consent.js          Consent read/write/subscribe helpers (client)
   utils.js            Shared helpers (sizes, canvas export, downloads,
                       friendlyError, multi-CDN loadScriptAny)
+content/blog/         Guide bodies as block arrays (one file per guide)
+lib/articles.js       Editorial catalog — feeds /blog, the sitemap and the
+                      "Tested guide" rail that appears on matching tool pages
 tests/
-  logic.test.mjs      237 assertions over the tools' pure logic — `npm test`
+  logic.test.mjs      382 assertions over the tools' pure logic — `npm test`
+  alias-loader.mjs    Lets plain Node resolve the repo's "@/…" alias
   pureSource.mjs      Marker-based extractor: slices pure functions out of the
                       real "use client" files so tests can never drift
 ```

@@ -3,6 +3,7 @@ import ToolsExplorer from "@/components/ToolsExplorer";
 import ToolCard from "@/components/ToolCard";
 import { Icon } from "@/components/icons";
 import { FlowDiagram, VideoDiagram, BgDiagram, ImageDiagram, PrivacyDiagram } from "@/components/diagrams";
+import { ARTICLES } from "@/lib/articles";
 import { TOOLS } from "@/lib/tools";
 import { SITE_URL } from "@/lib/site";
 
@@ -306,6 +307,34 @@ export default function HomePage() {
               <p className="mt-3 text-sm leading-relaxed text-slate-400">{f.a}</p>
             </details>
           ))}
+        </div>
+      </section>
+
+      {/* ── GUIDES ───────────────────────────────────────────────────────────── */}
+      <section className="mx-auto max-w-6xl px-4 sm:px-6 pt-24" id="guides">
+        <SectionHead
+          eyebrow="Guides"
+          title="Tested answers, not recycled advice"
+          text="Every guide is written by the team that builds these tools, and every number in it comes from a test we ran on real files."
+        />
+        <div className="mt-10 grid gap-5 md:grid-cols-3">
+          {ARTICLES.slice(0, 3).map((a) => (
+            <Link
+              key={a.slug}
+              href={`/blog/${a.slug}`}
+              className="flex h-full flex-col rounded-3xl border border-white/[0.08] bg-white/[0.02] p-6 transition hover:border-amber-400/40 hover:bg-white/[0.04]"
+            >
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-violet-300">{a.category}</span>
+              <h3 className="mt-2.5 text-lg font-extrabold leading-snug text-white">{a.title}</h3>
+              <p className="mt-2.5 text-sm leading-6 text-slate-400">{a.description}</p>
+              <span className="mt-auto pt-4 text-sm font-bold text-amber-300">Read the guide →</span>
+            </Link>
+          ))}
+        </div>
+        <div className="mt-8 text-center">
+          <Link href="/blog" className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-6 py-3 font-bold text-slate-200 transition hover:border-amber-400/50 hover:text-amber-200">
+            Browse all {ARTICLES.length} guides →
+          </Link>
         </div>
       </section>
 

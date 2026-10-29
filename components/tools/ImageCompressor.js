@@ -23,7 +23,7 @@ const UPNG_SRCS = [
 const MODE_COPY = {
   all: { drop: "Drop images to compress", hint: "JPG, PNG or WebP — add up to 50 at once" },
   jpg: { drop: "Drop JPG photos to compress", hint: "JPEG files (other images are converted to JPG)" },
-  png: { drop: "Drop PNG images to compress", hint: "Smart PNG compression — transparency is always preserved" },
+  png: { drop: "Drop PNG images to compress", hint: "Smart PNG compression — JPGs auto-tuned so the PNG lands smaller" },
 };
 
 let pngEnginePromise = null;
@@ -61,6 +61,15 @@ function loadPngEngine() {
 function pngColorsForQuality(quality) {
   if (quality >= 96) return 256;
   return Math.max(16, Math.min(256, Math.round((quality / 100) * 256)));
+}
+
+/* Escalation ladder for when a converted result would land at or above the
+   source size (the "2 MB JPG in, 5 MB PNG out" complaint). Pure on purpose so
+   tests can pin the exact sequence the auto-tuner walks. */
+function shrinkLadder(type, quality) {
+  if (type === "image/png") return [128, 64, 32, 16].map((colors) => ({ kind: "colors", colors }));
+  const first = Math.max(30, Math.round(quality) - 15);
+  return [...new Set([first, 60, 45, 32])].sort((a, b) => b - a).map((q) => ({ kind: "quality", quality: q }));
 }
 
 function drawImageCanvas(img, width, height) {
@@ -116,7 +125,7 @@ function noSavingsNote({ type, strategy, colours }) {
   return "Already well optimized — the re-encoded file was not smaller, so the original was kept. Resize it or convert to WebP for a real reduction.";
 }
 
-async function encodePngBlob(item, width, height, { strategy, quality }) {
+async function encodePngBlob(item, width, height, { strategy, quality, forceColors }) {
   const { canvas, ctx } = drawImageCanvas(item.img, width, height);
   // Without the palette encoder the browser's own PNG output is usually LARGER
   // than the source, so the fallback is only acceptable when it still does
@@ -158,7 +167,7 @@ async function encodePngBlob(item, width, height, { strategy, quality }) {
       // produces a slightly smaller lossless file than UPNG, so keep the best.
       candidates.push({ blob: await canvasPngBlob(canvas), note: "Lossless PNG optimized" });
     } else {
-      const colors = pngColorsForQuality(quality);
+      const colors = forceColors || pngColorsForQuality(quality);
       const smart = encodeWith(colors, `Smart PNG · ${colors} colours`);
       candidates.push(smart);
 
@@ -166,9 +175,9 @@ async function encodePngBlob(item, width, height, { strategy, quality }) {
       // PNG, where comparing with the source size is not meaningful), also
       // try a fully lossless UPNG candidate and keep whichever is smaller.
       const pixelCount = canvas.width * canvas.height;
-      const shouldTryLossless = item.file.type === "image/png"
+      const shouldTryLossless = !forceColors && (item.file.type === "image/png"
         ? smart.blob.size >= item.file.size * 0.9
-        : pixelCount <= 4_000_000;
+        : pixelCount <= 4_000_000);
       if (shouldTryLossless) {
         await letUiPaint();
         candidates.push(encodeWith(0, "Lossless PNG optimized"));
@@ -244,9 +253,31 @@ export default function ImageCompressor({ mode = "all" }) {
         });
       }
 
-      // Never hand back a bigger file when format & size are unchanged.
-      const unchanged = type === item.file.type && width === item.width && height === item.height;
-      if (unchanged && blob.size >= item.file.size) {
+      // Cross-format guard: a converted file must never come back HEAVIER than
+      // its source. Walk the ladder until the result beats the original.
+      if (blob.size >= item.file.size && type !== item.file.type) {
+        for (const step of shrinkLadder(type, quality)) {
+          await letUiPaint();
+          if (step.kind === "colors") {
+            const alt = await encodePngBlob(item, width, height, { strategy: "smart", quality, forceColors: step.colors });
+            if (alt.blob.size < blob.size) {
+              blob = alt.blob;
+              note = `Auto-tuned to a ${step.colors}-colour palette so the PNG lands under your original`;
+            }
+          } else {
+            const alt = await renderToBlob(item.img, { width, height, type, quality: step.quality / 100, background: type === "image/jpeg" ? "#ffffff" : null });
+            if (alt.size < blob.size) {
+              blob = alt;
+              note = `Auto-tuned quality to ${step.quality}% so the result lands under your original`;
+            }
+          }
+          if (blob.size < item.file.size) break;
+        }
+      }
+
+      // Nothing beat the original (tiny, already-optimal file): hand back the
+      // original with an honest note instead of a bigger "compressed" copy.
+      if (blob.size >= item.file.size) {
         return {
           result: item.file,
           outName: item.file.name,
@@ -513,9 +544,15 @@ export default function ImageCompressor({ mode = "all" }) {
                     )}
                     <div className="text-right">
                       <p className="text-sm font-extrabold text-emerald-300">{formatBytes(item.result.size)}</p>
-                      <span className="mt-0.5 inline-block rounded-full bg-emerald-400/15 border border-emerald-400/30 px-2 py-0.5 text-[11px] font-bold text-emerald-300">
-                        −{savedPct(item.file.size, item.result.size)}%
-                      </span>
+                      {item.result === item.file ? (
+                        <span className="mt-0.5 inline-block rounded-full bg-amber-400/15 border border-amber-400/30 px-2 py-0.5 text-[11px] font-bold text-amber-300">
+                          original kept
+                        </span>
+                      ) : (
+                        <span className="mt-0.5 inline-block rounded-full bg-emerald-400/15 border border-emerald-400/30 px-2 py-0.5 text-[11px] font-bold text-emerald-300">
+                          −{savedPct(item.file.size, item.result.size)}%
+                        </span>
+                      )}
                     </div>
                     <button
                       onClick={() => downloadBlob(item.result, item.outName)}

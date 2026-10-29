@@ -322,13 +322,14 @@ const CV_TEMPLATES = [
 const CV_COLORS = ["#b45309", "#1d4ed8", "#047857", "#7c3aed", "#be123c", "#0f766e", "#c2410c", "#111827"];
 const PHOTO_SHAPES = [["circle", "Circle"], ["rounded", "Rounded"], ["square", "Square"]];
 const PHOTO_SIZES = [["sm", "Small"], ["md", "Medium"], ["lg", "Large"]];
+const PHOTO_ALIGNS = [["left", "Left"], ["center", "Center"], ["right", "Right"]];
 
-function resumeHtml(d, withPrint) {
+function resumeHtml(d, withPrint, scaler) {
   const accent = d.color || "#b45309";
   const template = CV_TEMPLATES.some((t) => t.id === d.template) ? d.template : "modern";
   const name = esc(d.name) || "Your Name";
   const title = esc(d.title);
-  const photoCls = `photo ${d.photoShape || "circle"} ${d.photoSize || "md"}`;
+  const photoCls = `photo ${d.photoShape || "circle"} ${d.photoSize || "md"} al-${d.photoAlign || "center"}`;
   const photo = d.photo ? `<img class="${photoCls}" src="${d.photo}" alt="Profile photo"/>` : "";
 
   const exps = d.experiences.filter((e) => e.title || e.org).map((e) => `<div class="job"><div class="row"><strong>${esc(e.title)}</strong><span>${esc(e.dates)}</span></div><div class="org">${esc(e.org)}</div><p>${lines(e.desc).map((l) => "• " + esc(l)).join("<br>")}</p></div>`).join("");
@@ -378,6 +379,7 @@ function resumeHtml(d, withPrint) {
   .photo{object-fit:cover;display:block;background:#fff}
   .photo.circle{border-radius:50%}.photo.rounded{border-radius:12px}.photo.square{border-radius:0}
   .photo.sm{width:72px;height:72px}.photo.md{width:96px;height:96px}.photo.lg{width:124px;height:124px}
+  .photo.al-left{margin-left:0!important;margin-right:auto!important;float:none!important}.photo.al-center{margin-left:auto!important;margin-right:auto!important;float:none!important}.photo.al-right{margin-left:auto!important;margin-right:0!important;float:none!important}
   .chip{display:inline-block;border:1px solid ${accent};color:${accent};border-radius:999px;padding:2px 10px;font-size:11.5px;margin:0 5px 6px 0}
   /* two-column: dark sidebar */
   .modern{display:flex;padding:0}.modern aside{width:62mm;background:#232838;color:#e8eaf6;padding:14mm 9mm;min-height:296mm}.modern aside h3{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#ffc531;margin:18px 0 8px}.modern aside h3:first-of-type{margin-top:14px}.modern .side{font-size:12.5px;line-height:1.7;word-break:break-word}.modern main{flex:1;padding:16mm 14mm}.modern .photo{margin:0 auto 6px;border:3px solid rgba(255,255,255,.25)}
@@ -394,7 +396,7 @@ function resumeHtml(d, withPrint) {
   /* single-column: parser-safe */
   .ats{font-family:"Times New Roman",Times,serif;padding:18mm 20mm}.ats h1{font-size:23px;text-align:center;text-transform:uppercase;letter-spacing:.08em}.ats .title{text-align:center;color:#333;font-weight:400;font-size:14px}.ats .contact{text-align:center;color:#333}.ats header{border-bottom:1px solid #000;padding-bottom:8px}.ats h2{color:#000;border-bottom:1px solid #000;font-size:12px;margin:14px 0 6px}.ats .org{color:#000;font-weight:700}.ats .row span{color:#333}.ats p{font-size:12.5px}
   @media print{body{background:#fff}}
-  </style>${withPrint ? "<script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>" : ""}</head><body>${body}</body></html>`;
+  </style>${withPrint ? "<script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>" : ""}</head><body>${scaler ? `<div id="cvscaler" style="transform-origin:top left;width:210mm">${body}</div><script>(function(){var el=document.getElementById('cvscaler');function fit(){var vw=document.documentElement.clientWidth||window.innerWidth;var pw=el.offsetWidth||794;var s=Math.min(1,vw/pw);el.style.transform='scale('+s+')';document.body.style.height=(el.scrollHeight*s)+'px';document.body.style.overflowX='hidden'}window.addEventListener('resize',fit);window.addEventListener('load',fit);fit();setTimeout(fit,150);setTimeout(fit,700)})();<\/script>` : body}</body></html>`;
 }
 
 const emptyEntry = () => ({ title: "", org: "", dates: "", desc: "" });
@@ -405,13 +407,13 @@ const SAMPLE_CV = {
   skills: "Communication\nMS Excel\nCustomer dealing\nUrdu / English typing", languages: "Urdu (native)\nEnglish (good)",
   experiences: [{ title: "Sales Officer", org: "ABC Traders", dates: "2022 — Present", desc: "Visited 40+ shops weekly and grew area sales by 25%\nPrepared daily sales reports in Excel" }],
   education: [{ title: "Intermediate (Commerce)", org: "Board of Intermediate Education", dates: "2020", desc: "" }],
-  color: "#b45309", template: "modern", photo: "", photoShape: "circle", photoSize: "md",
+  color: "#b45309", template: "modern", photo: "", photoShape: "circle", photoSize: "md", photoAlign: "center",
 };
 
 const BLANK_CV = {
   name: "", title: "", email: "", phone: "", city: "", website: "", summary: "", skills: "", languages: "",
   experiences: [emptyEntry()], education: [emptyEntry()],
-  color: "#b45309", template: "modern", photo: "", photoShape: "circle", photoSize: "md",
+  color: "#b45309", template: "modern", photo: "", photoShape: "circle", photoSize: "md", photoAlign: "center",
 };
 
 export function ResumeMaker() {
@@ -429,7 +431,7 @@ export function ResumeMaker() {
 
   const set = (k, v) => setD((p) => ({ ...p, [k]: v }));
   const setEntry = (key, i, k, v) => setD((p) => ({ ...p, [key]: p[key].map((e, j) => j === i ? { ...e, [k]: v } : e) }));
-  const html = useMemo(() => resumeHtml(d, false), [d]);
+  const html = useMemo(() => resumeHtml(d, false, true), [d]);
 
   const printPdf = () => {
     const blob = new Blob([resumeHtml(d, true)], { type: "text/html" });
@@ -546,6 +548,12 @@ export function ResumeMaker() {
                       <button key={v} type="button" onClick={() => set("photoSize", v)} aria-pressed={d.photoSize === v} className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition ${d.photoSize === v ? "border-amber-400 bg-amber-400/10 text-white" : "border-white/10 text-slate-400 hover:border-white/25"}`}>{l}</button>
                     ))}
                   </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Align</span>
+                    {PHOTO_ALIGNS.map(([v, l]) => (
+                      <button key={v} type="button" onClick={() => set("photoAlign", v)} aria-pressed={d.photoAlign === v} className={`rounded-lg border px-2 py-1 text-[11px] font-bold transition ${d.photoAlign === v ? "border-amber-400 bg-amber-400/10 text-white" : "border-white/10 text-slate-400 hover:border-white/25"}`}>{l}</button>
+                    ))}
+                  </span>
                 </div>
               </div>
               {d.photo && (
@@ -556,7 +564,7 @@ export function ResumeMaker() {
             </div>
             {photoNote && <p className="mt-2.5 text-xs text-emerald-300" role="status">{photoNote}</p>}
             <p className="mt-2.5 text-xs leading-relaxed text-slate-500">
-              Photos are cropped to a square and resized on your device before they are stored, so your CV keeps auto-saving instantly. The <strong className="text-slate-300">ATS-Friendly</strong> template leaves the photo out on purpose — applicant-tracking software reads text, not images.
+              Photos are cropped to a square and resized on your device before they are stored. Use <strong className="text-slate-300">Align</strong> to place the photo left, centre or right in sidebar and header layouts, so your CV keeps auto-saving instantly. The <strong className="text-slate-300">ATS-Friendly</strong> template leaves the photo out on purpose — applicant-tracking software reads text, not images.
             </p>
           </div>
         </fieldset>

@@ -21,6 +21,84 @@ const GRADIENTS = {
   studio: ["#f8fafc", "#cbd5e1", "#64748b"],
 };
 
+/* ── Pure alpha refinement (no DOM — pinned by tests) ────────────────────
+   Segmentation models leave two artefacts: faint low-alpha haze where the
+   background almost went, and isolated speckle patches that survived the
+   mask. refineAlpha cleans the alpha channel only — colours stay untouched.
+     strict    – soft threshold: alpha at/below the knee goes fully clear
+     despeckle – deletes small isolated opaque blobs far from the subject
+     soften    – feathers the matte edge so cut-outs don't look stickered */
+function refineAlpha(src, w, h, { strict = 0, soften = 0, despeckle = true } = {}) {
+  const a = new Uint8ClampedArray(src);
+  if (strict > 0) {
+    const lo = strict * 1.2;
+    const hi = lo + 70;
+    for (let i = 3; i < a.length; i += 4) {
+      const v = a[i];
+      a[i] = v <= lo ? 0 : v >= hi ? 255 : Math.round(((v - lo) / (hi - lo)) * 255);
+    }
+  }
+  if (despeckle) {
+    const sw = Math.max(8, Math.floor(w / 4));
+    const sh = Math.max(8, Math.floor(h / 4));
+    const gx = new Float32Array(sw * sh);
+    for (let gy = 0; gy < sh; gy++) {
+      for (let x = 0; x < sw; x++) {
+        let acc = 0;
+        for (let dy = 0; dy < 4; dy++) for (let dx = 0; dx < 4; dx++) {
+          const px = Math.min(w - 1, x * 4 + dx), py = Math.min(h - 1, gy * 4 + dy);
+          acc += a[(py * w + px) * 4 + 3];
+        }
+        gx[gy * sw + x] = acc / 16;
+      }
+    }
+    const label = new Int32Array(sw * sh).fill(-1);
+    const sizes = [];
+    for (let i = 0; i < gx.length; i++) {
+      if (gx[i] < 60 || label[i] !== -1) continue;
+      const id = sizes.length;
+      let size = 0;
+      const stack = [i];
+      label[i] = id;
+      while (stack.length) {
+        const c = stack.pop();
+        size++;
+        const cx = c % sw, cy = (c / sw) | 0;
+        const nb = [cx > 0 ? c - 1 : -1, cx < sw - 1 ? c + 1 : -1, cy > 0 ? c - sw : -1, cy < sh - 1 ? c + sw : -1];
+        for (const n of nb) if (n >= 0 && label[n] === -1 && gx[n] >= 60) { label[n] = id; stack.push(n); }
+      }
+      sizes.push(size);
+    }
+    if (sizes.length > 1) {
+      const biggest = Math.max(...sizes);
+      const minKeep = Math.max(6, biggest * 0.02);
+      for (let gy = 0; gy < sh; gy++) {
+        for (let x = 0; x < sw; x++) {
+          const id = label[gy * sw + x];
+          if (id >= 0 && sizes[id] < minKeep) {
+            for (let dy = 0; dy < 4; dy++) for (let dx = 0; dx < 4; dx++) {
+              const px = x * 4 + dx, py = gy * 4 + dy;
+              if (px < w && py < h) a[(py * w + px) * 4 + 3] = 0;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (soften > 0) {
+    const base = new Uint8ClampedArray(a);
+    const t = (soften / 100) * 0.6;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = (y * w + x) * 4 + 3;
+        const avg = (base[i - 4] + base[i + 4] + base[i - w * 4] + base[i + w * 4] + base[i]) / 5;
+        a[i] = base[i] + (avg - base[i]) * t;
+      }
+    }
+  }
+  return a;
+}
+
 export default function BackgroundRemover() {
   const [file, setFile] = useState(null);
   const [srcUrl, setSrcUrl] = useState("");
@@ -32,6 +110,10 @@ export default function BackgroundRemover() {
   const [cutout, setCutout] = useState(null); // { blob, url }
   const [bg, setBg] = useState("transparent");
   const [color, setColor] = useState("#7c5cff");
+  const [strict, setStrict] = useState(35);
+  const [soften, setSoften] = useState(12);
+  const [despeckle, setDespeckle] = useState(true);
+  const rawRef = useRef(null); // un-refined matte, so sliders can re-run instantly
   const [finalBlob, setFinalBlob] = useState(null);
   const [finalUrl, setFinalUrl] = useState("");
   const [error, setError] = useState("");
@@ -96,9 +178,12 @@ export default function BackgroundRemover() {
       });
 
       if (seqRef.current !== seq) return;
-      setCutout({ blob, url: URL.createObjectURL(blob) });
+      const raw = await blobToImageData(blob);
+      if (seqRef.current !== seq) return;
+      rawRef.current = raw;
+      applyRefined(raw, { strict, soften, despeckle });
       setProgress(100);
-      setStage("Done! Choose a background below, or download the transparent PNG.");
+      setStage("Done! The matte is auto-cleaned — tune it below, pick a background, or download the transparent PNG.");
     } catch (e) {
       console.error(e);
       setError(
@@ -109,6 +194,40 @@ export default function BackgroundRemover() {
     } finally {
       if (seqRef.current === seq) setWorking(false);
     }
+  };
+
+  const blobToImageData = async (blob) => {
+    const { img, url, width, height } = await loadImage(blob);
+    URL.revokeObjectURL(url);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, width, height);
+    return { data: new Uint8ClampedArray(d.data), width, height };
+  };
+
+  const applyRefined = (raw, cfg) => {
+    const data = refineAlpha(raw.data, raw.width, raw.height, cfg);
+    const canvas = document.createElement("canvas");
+    canvas.width = raw.width;
+    canvas.height = raw.height;
+    const ctx = canvas.getContext("2d");
+    const frame = ctx.createImageData(raw.width, raw.height);
+    frame.data.set(data);
+    ctx.putImageData(frame, 0, 0);
+    canvas.toBlob((b) => {
+      if (!b) return;
+      setCutout((prev) => {
+        if (prev) URL.revokeObjectURL(prev.url);
+        return { blob: b, url: URL.createObjectURL(b) };
+      });
+    }, "image/png");
+  };
+
+  const retune = (next) => {
+    if (rawRef.current) applyRefined(rawRef.current, next);
   };
 
   // Compose final image whenever background choice changes.
@@ -154,6 +273,7 @@ export default function BackgroundRemover() {
   const reset = () => {
     seqRef.current++;
     [srcUrl, cutout?.url, finalUrl].forEach((u) => u && URL.revokeObjectURL(u));
+    rawRef.current = null;
     setFile(null); setSrcUrl(""); setDims(null); setCutout(null);
     setFinalBlob(null); setFinalUrl(""); setStage(""); setProgress(null); setError(""); setWorking(false);
   };
@@ -303,6 +423,31 @@ export default function BackgroundRemover() {
                       <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-8 w-10 cursor-pointer rounded-lg border border-white/15 bg-transparent" />
                     </label>
                   )}
+                </div>
+
+                <h2 className="mt-5 text-sm font-bold uppercase tracking-wider text-slate-300">Matte cleanup</h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                  If faint background haze or stray patches survive, raise <strong className="text-slate-300">strictness</strong> to
+                  push them fully transparent; despeckle deletes isolated leftover blobs and softening feathers the edge so the
+                  cut-out does not look stickered. Runs instantly on your device.
+                </p>
+                <div className="mt-3 space-y-3 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+                  <div>
+                    <label className="flex items-center justify-between text-sm font-semibold text-white">
+                      Leftover strictness <span className="rounded-md bg-violet-400/15 px-2 py-0.5 text-xs font-bold text-violet-300">{strict}</span>
+                    </label>
+                    <input type="range" min="0" max="60" value={strict} onChange={(e) => { const v = +e.target.value; setStrict(v); retune({ strict: v, soften, despeckle }); }} className="mt-2 w-full" />
+                  </div>
+                  <div>
+                    <label className="flex items-center justify-between text-sm font-semibold text-white">
+                      Edge softening <span className="rounded-md bg-violet-400/15 px-2 py-0.5 text-xs font-bold text-violet-300">{soften}</span>
+                    </label>
+                    <input type="range" min="0" max="100" value={soften} onChange={(e) => { const v = +e.target.value; setSoften(v); retune({ strict, soften: v, despeckle }); }} className="mt-2 w-full" />
+                  </div>
+                  <label className="flex items-center gap-2.5 text-sm text-slate-300">
+                    <input type="checkbox" checked={despeckle} onChange={(e) => { const v = e.target.checked; setDespeckle(v); retune({ strict, soften, despeckle: v }); }} className="h-4 w-4" />
+                    Remove stray leftover patches (despeckle)
+                  </label>
                 </div>
 
                 <button

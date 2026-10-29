@@ -218,9 +218,107 @@ export function HeicToJpg() {
 }
 
 /* ═══════════════ OCR — IMAGE TO TEXT ═══════════════ */
+/* ── Pure OCR scan-enhancement pipeline (no DOM — pinned by tests) ───────
+   Tesseract's accuracy follows input quality more than anything else:
+   small, low-contrast or coloured scans produce garbage words. This pass
+   greys the image, stretches its contrast to the full range, crisps glyph
+   edges, and — when the histogram is genuinely two-peaked (ink vs paper) —
+   binarises with Otsu's threshold. Photo mode skips binarisation because
+   forcing ink/paper on a photo destroys anti-aliasing the LSTM relies on. */
+function ocrHistogram(data, n) {
+  const hist = new Float64Array(256);
+  for (let i = 0; i < n * 4; i += 4) {
+    hist[Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2])]++;
+  }
+  return hist;
+}
+
+function otsuThreshold(hist, total) {
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0, wB = 0, best = -1, threshold = 127;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > best) { best = between; threshold = t; }
+  }
+  return { threshold, between: best };
+}
+
+function ocrPreprocessPixels(data, w, h, opts = {}) {
+  const { mode = "auto" } = opts;
+  const n = w * h;
+  const out = new Uint8ClampedArray(data);
+  // 1) grey + 2) percentile contrast stretch (1%..99%)
+  const hist = ocrHistogram(out, n);
+  let cum = 0, lo = 0, hi = 255;
+  for (let i = 0; i < 256; i++) { cum += hist[i]; if (cum >= n * 0.01) { lo = i; break; } }
+  cum = 0;
+  for (let i = 255; i >= 0; i--) { cum += hist[i]; if (cum >= n * 0.01) { hi = i; break; } }
+  const span = Math.max(1, hi - lo);
+  const lut = new Uint8ClampedArray(256);
+  for (let i = 0; i < 256; i++) lut[i] = Math.max(0, Math.min(255, Math.round(((i - lo) * 255) / span)));
+  const grey = new Uint8ClampedArray(n);
+  for (let p = 0, i = 0; p < n; p++, i += 4) {
+    const g = lut[Math.round(0.299 * out[i] + 0.587 * out[i + 1] + 0.114 * out[i + 2])];
+    grey[p] = g;
+    out[i] = out[i + 1] = out[i + 2] = g;
+  }
+  // 3) gentle unsharp so glyph edges survive binarisation
+  const soft = new Uint8ClampedArray(grey);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = y * w + x;
+      const avg = (grey[p - 1] + grey[p + 1] + grey[p - w] + grey[p + w]) / 4;
+      const v = grey[p] + (grey[p] - avg) * 0.45;
+      soft[p] = v < 0 ? 0 : v > 255 ? 255 : v;
+    }
+  }
+  // 4) binarise when the histogram is genuinely ink-vs-paper
+  const h2 = new Float64Array(256);
+  for (let p = 0; p < n; p++) h2[soft[p]]++;
+  const { threshold } = otsuThreshold(h2, n);
+  // Bimodality = a real valley at the threshold: two fat peaks (ink, paper)
+  // with almost nothing between them. A smooth photo or gradient has mass
+  // everywhere, so its valley score stays low and we keep the greys.
+  const mass = (a, b) => { let m = 0; for (let i = Math.max(0, a); i <= Math.min(255, b); i++) m += h2[i]; return m; };
+  let p1 = 0, p2 = 0;
+  for (let i = 0; i < threshold; i++) if (h2[i] > h2[p1]) p1 = i;
+  for (let i = threshold; i < 256; i++) if (h2[i] > h2[p2]) p2 = i;
+  const innerA = Math.min(p1, p2) + 9;
+  const innerB = Math.max(p1, p2) - 9;
+  const inner = innerB >= innerA ? mass(innerA, innerB) : 0;
+  const smallerPeak = Math.min(mass(p1 - 8, p1 + 8), mass(p2 - 8, p2 + 8));
+  const valley = smallerPeak > 0 ? 1 - inner / smallerPeak : 0;
+  const bimodal = valley > 0.7 && mass(p1 - 8, p1 + 8) >= n * 0.05 && mass(p2 - 8, p2 + 8) >= n * 0.05;
+  const binarize = mode === "doc" || (mode === "auto" && bimodal);
+  if (binarize) {
+    for (let p = 0, i = 0; p < n; p++, i += 4) {
+      const v = soft[p] > threshold ? 255 : 0;
+      out[i] = out[i + 1] = out[i + 2] = v;
+    }
+  } else {
+    for (let p = 0, i = 0; p < n; p++, i += 4) {
+      out[i] = out[i + 1] = out[i + 2] = soft[p];
+    }
+  }
+  return { data: out, threshold, binarized: binarize };
+}
+
 export function ImageToText() {
   const [item, setItem] = useState(null);
   const [lang, setLang] = useState("eng");
+  const [enhance, setEnhance] = useState(true);
+  const [scanMode, setScanMode] = useState("auto");
+  const [layout, setLayout] = useState("3");
+  const [rot, setRot] = useState(0);
+  const [confidence, setConfidence] = useState(null);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(null);
   const [stage, setStage] = useState("");
@@ -241,23 +339,55 @@ export function ImageToText() {
   };
 
   const run = async () => {
-    setBusy(true); setError(""); setText(""); setPct(1);
+    setBusy(true); setError(""); setText(""); setPct(1); setConfidence(null);
     try {
       setStage("Loading the OCR brain (first use downloads language data)…");
       await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js");
-      // gentle pre-process: upscale small scans + grayscale contrast
-      let input = item.file;
-      if (Math.max(item.width, item.height) < 1600) {
-        const f = Math.min(2.5, 1600 / Math.max(item.width, item.height));
-        const c = document.createElement("canvas"); c.width = Math.round(item.width * f); c.height = Math.round(item.height * f);
-        const x = c.getContext("2d"); x.filter = "grayscale(1) contrast(1.25)"; x.imageSmoothingQuality = "high"; x.drawImage(item.img, 0, 0, c.width, c.height);
-        input = await new Promise((r) => c.toBlob(r, "image/png"));
+
+      // Scan enhancement: rotate upright, upscale small scans, then run the
+      // pixel pipeline (grey → contrast stretch → sharpen → smart binarise).
+      setStage("Enhancing the scan for better accuracy…");
+      await new Promise((r) => setTimeout(r, 30));
+      const longest = Math.max(item.width, item.height);
+      const factor = longest < 2000 ? Math.min(3, 2000 / longest) : 1;
+      const cw = Math.round(item.width * factor);
+      const ch = Math.round(item.height * factor);
+      const swap = rot === 90 || rot === 270;
+      const canvas = document.createElement("canvas");
+      canvas.width = swap ? ch : cw;
+      canvas.height = swap ? cw : ch;
+      const x = canvas.getContext("2d", { willReadFrequently: true });
+      x.imageSmoothingEnabled = true;
+      x.imageSmoothingQuality = "high";
+      x.translate(canvas.width / 2, canvas.height / 2);
+      x.rotate((rot * Math.PI) / 180);
+      x.drawImage(item.img, -cw / 2, -ch / 2, cw, ch);
+      let pre = null;
+      if (enhance) {
+        const frame = x.getImageData(0, 0, canvas.width, canvas.height);
+        pre = ocrPreprocessPixels(frame.data, canvas.width, canvas.height, { mode: scanMode });
+        x.putImageData(new ImageData(pre.data, canvas.width, canvas.height), 0, 0);
       }
-      const { data } = await window.Tesseract.recognize(input, lang, {
-        logger: (m) => { if (m.status === "recognizing text") { setPct(Math.round(m.progress * 100)); setStage("Reading your image…"); } else setStage(m.status.replace(/_/g, " ")); },
+      const input = canvas;
+
+      const worker = await window.Tesseract.createWorker(lang, 1, {
+        logger: (m) => {
+          if (m.status === "recognizing text") { setPct(Math.round(m.progress * 100)); setStage("Reading your image…"); }
+          else setStage(m.status.replace(/_/g, " "));
+        },
       });
-      if (!data.text.trim()) throw new Error("No readable text found. Try a sharper, straight, well-lit photo of the document.");
-      setText(data.text.trim()); setStage("Done — edit anything below, then copy or download.");
+      // Layout hint + real spaces between words: both move accuracy a lot.
+      await worker.setParameters({
+        preserve_interword_spaces: "1",
+        tessedit_pageseg_mode: layout,
+      });
+      const { data } = await worker.recognize(input);
+      await worker.terminate();
+
+      if (!data.text.trim()) throw new Error("No readable text found. Try a sharper, straight, well-lit photo of the document — or rotate it upright above.");
+      setConfidence(Math.round(data.confidence));
+      setText(data.text.trim());
+      setStage(`Done${pre ? (pre.binarized ? " — scan was binarised for ink-on-paper reading" : " — scan enhanced (grayscale + contrast)") : ""}. Edit anything below, then copy or download.`);
     } catch (e) { setError(friendlyError(e, "OCR failed in this browser. Try Chrome/Edge on desktop.")); setStage(""); setPct(null); }
     finally { setBusy(false); }
   };
@@ -283,15 +413,64 @@ export function ImageToText() {
                 </select></div>
               <div className="flex items-end gap-2">
                 <button onClick={run} disabled={busy} className={btnP}><Icon name="type" size={16} /> {busy ? "Reading…" : "Extract text"}</button>
-                <button onClick={() => { setItem(null); setText(""); }} className={btnGhost}><Icon name="trash" size={15} /> New</button>
+                <button onClick={() => { setItem(null); setText(""); setRot(0); setConfidence(null); }} className={btnGhost}><Icon name="trash" size={15} /> New</button>
               </div>
+            </div>
+
+            {/* scan enhancement */}
+            <div className="mt-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Scan enhancement</p>
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                  <input type="checkbox" checked={enhance} onChange={(e) => setEnhance(e.target.checked)} className="h-4 w-4" disabled={busy} />
+                  Auto-enhance (recommended)
+                </label>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div><label className="text-sm font-semibold text-white">Scan type</label>
+                  <select value={scanMode} onChange={(e) => setScanMode(e.target.value)} disabled={busy || !enhance} className={sel}>
+                    <option value="auto">Auto-detect (ink vs photo)</option>
+                    <option value="doc">Printed document (binarise)</option>
+                    <option value="photo">Photo / screen (keep greys)</option>
+                  </select></div>
+                <div><label className="text-sm font-semibold text-white">Page layout</label>
+                  <select value={layout} onChange={(e) => setLayout(e.target.value)} disabled={busy} className={sel}>
+                    <option value="3">Auto (mixed page)</option>
+                    <option value="6">One block of text</option>
+                    <option value="4">Single column</option>
+                    <option value="7">Single line</option>
+                    <option value="11">Sparse words (signs, labels)</option>
+                  </select></div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Rotate</span>
+                {[90, 180, 270].map((r) => (
+                  <button key={r} type="button" onClick={() => setRot((rot + r) % 360)} disabled={busy} className="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] font-bold text-slate-300 transition hover:border-cyan-400/40 disabled:opacity-40">
+                    {r === 90 ? "↻ 90°" : r === 180 ? "180°" : "↺ 90°"}
+                  </button>
+                ))}
+                {rot !== 0 && <span className="text-[11px] font-bold text-cyan-300">currently {rot}°</span>}
+                <span className="text-[11px] text-slate-500">— turn sideways scans upright before reading</span>
+              </div>
+              <p className="mt-2.5 text-xs leading-relaxed text-slate-500">
+                Enhancement greys the scan, stretches its contrast, crisps glyph edges and — when the page is
+                genuinely ink-on-paper — binarises it with Otsu's threshold. Small photos are upscaled up to 3×
+                first, because OCR reads 30px text far better than 10px text.
+              </p>
             </div>
             {(busy || stage) && <div className="mt-4" role="status">{pct != null && <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-cyan-400 transition-all" style={{ width: `${pct}%` }} /></div>}<p className="mt-2 text-xs capitalize text-slate-400">{stage}</p></div>}
           </div>
           <div>
             <label className="text-sm font-semibold text-white">Extracted text <span className="font-normal text-slate-500">(fully editable)</span></label>
             <textarea value={text} onChange={(e) => setText(e.target.value)} rows={16} placeholder="Your text will appear here…" className="mt-2 w-full rounded-2xl border border-white/10 bg-[#0d1025] px-4 py-3 font-mono text-[13.5px] leading-relaxed text-white placeholder:text-slate-500 outline-none focus:border-cyan-400/60" />
-            <p className="mt-1.5 text-xs text-slate-500">{text ? `${text.split(/\s+/).filter(Boolean).length} words · ${text.length} characters` : "Tip: straight, sharp, shadow-free photos read best."}</p>
+            <p className="mt-1.5 text-xs text-slate-500">
+              {text ? `${text.split(/\s+/).filter(Boolean).length} words · ${text.length} characters` : "Tip: straight, sharp, shadow-free photos read best."}
+              {confidence != null && (
+                <span className={confidence >= 75 ? "text-emerald-300" : confidence >= 50 ? "text-amber-300" : "text-rose-300"}>
+                  {" "}· engine confidence {confidence}%{confidence < 60 ? " — low: try Rotate, a sharper photo, or the Printed-document scan type" : ""}
+                </span>
+              )}
+            </p>
             {text && (
               <div className="mt-3 flex flex-wrap gap-2.5">
                 <button onClick={async () => { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }} className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.06] border border-white/10 px-4 py-2.5 text-sm font-semibold text-white hover:border-cyan-400/50"><Icon name={copied ? "check" : "copy"} size={15} /> {copied ? "Copied!" : "Copy text"}</button>

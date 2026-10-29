@@ -101,6 +101,12 @@ export async function compressLadder() {
   return importSource(code, ["shrinkLadder"]);
 }
 
+export async function ocrPure() {
+  const rel = "components/tools/quickTools.js";
+  const code = slice(rel, "function ocrHistogram(data, n) {", "export function ImageToText() {");
+  return importSource(code, ["ocrHistogram", "otsuThreshold", "ocrPreprocessPixels"]);
+}
+
 export async function utils() {
   // lib/utils.js is already plain ESM with no imports (browser APIs are only
   // touched inside function bodies), so it can be imported as-is.

@@ -8,7 +8,7 @@
 // covered — they need a real browser.
 
 import { existsSync, readFileSync } from "node:fs";
-import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, enhancePure, alphaPure, compressLadder, src } from "./pureSource.mjs";
+import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, enhancePure, alphaPure, compressLadder, ocrPure, src } from "./pureSource.mjs";
 
 let pass = 0;
 const fails = [];
@@ -689,6 +689,49 @@ for (let i = 0; i < big.length; i += 4) { big[i] = big[i + 1] = big[i + 2] = 120
 const bigOut = bg.guidedAlpha(big, big, 4000, 2500);
 ck("giant images skip matting (memory guard)", bigOut[3] === 205 && bigOut[7] === 235, `${bigOut[3]}/${bigOut[7]}`);
 ck("boxMean of a constant field is that constant", Math.abs(bg.boxMean(new Float32Array(64).fill(0.5), 8, 8, 2)[0] - 0.5) < 1e-6);
+
+/* ═════════ 29. OCR scan-enhancement pipeline ═══════════════════════════
+   "Extracts garbage words" is almost always an input-quality problem, so
+   the scan now goes through grey → percentile contrast stretch → glyph
+   sharpen → valley-detected Otsu binarise before Tesseract sees it. Pinned
+   on synthetic scans; photo mode must NOT binarise.                      */
+
+console.log("\n29. OCR scan enhancement");
+const ocr = await ocrPure();
+const pix = (w, h, fn) => { const d = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const [r, g, b] = fn(x, y); d[(y * w + x) * 4] = r; d[(y * w + x) * 4 + 1] = g; d[(y * w + x) * 4 + 2] = b; d[(y * w + x) * 4 + 3] = 255; } return d; };
+const two = new Float64Array(256); two[0] = 1; two[255] = 1;
+ck("histogram bins luminance", ocr.ocrHistogram(pix(2, 1, (x) => (x ? [255, 255, 255] : [0, 0, 0])), 2)[255] === 1 && ocr.ocrHistogram(pix(2, 1, (x) => (x ? [255, 255, 255] : [0, 0, 0])), 2)[0] === 1);
+const bi = new Float64Array(256); bi[50] = 64; bi[200] = 192;
+const ot = ocr.otsuThreshold(bi, 256);
+ck("otsu lands between the two peaks", ot.threshold >= 50 && ot.threshold <= 200, String(ot.threshold));
+const ink = pix(16, 16, (x, y) => { const v = x < 4 ? 30 : 230; return [v, v, v]; });
+const docOut = ocr.ocrPreprocessPixels(ink, 16, 16, { mode: "doc" });
+const vals = (d) => [...new Set(d.data.filter((_, i) => i % 4 === 0))].sort((a, b) => a - b);
+ck("document mode binarises to pure ink/paper", eq(vals(docOut), [0, 255]), JSON.stringify(vals(docOut)));
+ck("ink side stays ink, paper stays paper", docOut.data[0] === 0 && docOut.data[(10 * 16 + 10) * 4] === 255);
+const tones = pix(16, 16, (x, y) => { const v = [40, 120, 160, 210][Math.floor(y / 4)]; return [v, v, v]; });
+const photoOut = ocr.ocrPreprocessPixels(tones, 16, 16, { mode: "photo" });
+ck("photo mode keeps greys (no binarise)", vals(photoOut).length >= 3 && !photoOut.binarized, JSON.stringify(vals(photoOut)));
+const docTones = ocr.ocrPreprocessPixels(tones, 16, 16, { mode: "doc" });
+ck("document mode forces binarise even on tones", eq(vals(docTones), [0, 255]));
+const autoInk = ocr.ocrPreprocessPixels(ink, 16, 16, { mode: "auto" });
+ck("auto detects ink-on-paper and binarises", autoInk.binarized === true);
+const grad = pix(64, 8, (x) => [x * 4, x * 4, x * 4]);
+const autoGrad = ocr.ocrPreprocessPixels(grad, 64, 8, { mode: "auto" });
+ck("auto leaves a smooth photo/gradient unbinarised", autoGrad.binarized === false && vals(autoGrad).length > 4);
+const colour = pix(4, 4, () => [200, 100, 50]);
+const greyOut = ocr.ocrPreprocessPixels(colour, 4, 4, { mode: "photo" });
+ck("output is true grayscale", greyOut.data[0] === greyOut.data[1] && greyOut.data[1] === greyOut.data[2]);
+const lowC = pix(8, 8, (x, y) => { const v = 100 + ((x + y) % 6) * 8; return [v, v, v]; });
+const stretched = ocr.ocrPreprocessPixels(lowC, 8, 8, { mode: "photo" });
+const sv = vals(stretched);
+ck("percentile stretch widens a washed-out scan", sv[0] <= 40 && sv[sv.length - 1] >= 220, `${sv[0]}..${sv[sv.length - 1]}`);
+const ocrSrc = src("components/tools/quickTools.js");
+ck("worker gets layout (PSM) + real inter-word spaces", ocrSrc.includes("preserve_interword_spaces: \"1\"") && ocrSrc.includes("tessedit_pageseg_mode: layout"));
+ck("small scans upscale up to 3x before OCR", ocrSrc.includes("Math.min(3, 2000 / longest)"));
+ck("rotation controls exist for sideways scans", ocrSrc.includes("currently {rot}°"));
+ck("confidence readout warns when recognition is shaky", ocrSrc.includes("engine confidence {confidence}%") && ocrSrc.includes("confidence < 60"));
+ck("scan-type + layout selectors wired", ocrSrc.includes("Printed document (binarise)") && ocrSrc.includes("Sparse words (signs, labels)"));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

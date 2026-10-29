@@ -7,7 +7,7 @@
 // Browser-only tools (video, canvas, WebAssembly, MediaRecorder) are not
 // covered — they need a real browser.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, src } from "./pureSource.mjs";
 
 let pass = 0;
@@ -526,6 +526,33 @@ ck("links stagger: two join at xl", headerSrc.includes("hidden xl:inline-block")
 ck("all six nav destinations kept", ["/tools", "/blog", "/tools/image-compressor", "/tools/video-compressor", "/tools/background-remover", "/tools/image-to-pdf"].every((h) => headerSrc.includes(`href: "${h}"`)));
 ck("mobile menu still lists every link", headerSrc.includes('aria-label="Mobile"') && headerSrc.includes("LINKS.map"));
 ck("Explore button cannot shrink-wrap", headerSrc.includes("whitespace-nowrap shrink-0 items-center gap-1.5 rounded-xl bg-amber-400"));
+
+/* ═════════ 23. Favicon / brand-icon guards — Google shows these ═══════
+   Google's favicon crawler fetches a STABLE, CRAWLABLE url from the home
+   page (≥48×48, multiples of 48 preferred) and also probes /favicon.ico.
+   A data: URI satisfies neither, which is why the old icon never appeared
+   in search results. Guards: real files on disk, right dimensions, wired
+   into the layout metadata, and no data: URI ever again.                */
+
+console.log("\n23. Favicon / brand-icon guards");
+const sharpMod = (await import("sharp")).default;
+const layoutSrc = src("app/layout.js");
+ck("favicon.ico exists with a valid ICO header", (() => {
+  if (!existsSync("public/favicon.ico")) return false;
+  const b = readFileSync("public/favicon.ico");
+  return b.readUInt16LE(0) === 0 && b.readUInt16LE(2) === 1 && b.readUInt16LE(4) >= 1 && b[6] >= 48;
+})());
+for (const [file, px] of [["favicon-96.png", 96], ["favicon-192.png", 192], ["apple-touch-icon.png", 180]]) {
+  ck(`${file} exists`, existsSync("public/" + file));
+  if (existsSync("public/" + file)) {
+    const m = await sharpMod("public/" + file).metadata();
+    ck(`${file} is ${px}px square`, m.width === px && m.height === px, `${m.width}x${m.height}`);
+  }
+}
+ck("google-facing sizes are multiples of 48", [96, 192].every((n) => n % 48 === 0));
+ck("layout wires every favicon url", ["/favicon.ico", "/favicon-96.png", "/favicon-192.png", "/apple-touch-icon.png"].every((u) => layoutSrc.includes(`url: "${u}"`)));
+ck("no data: URI favicon (uncrawlable by Google)", !layoutSrc.includes("data:image/svg+xml"));
+ck("robots.txt leaves icons crawlable", src("app/robots.js").includes('allow: "/"'));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

@@ -662,8 +662,13 @@ ck("matte cleanup panel is wired in the UI", src("components/tools/BackgroundRem
 console.log("\n28. Guided-filter edge matting");
 ck("matting runs automatically on every run", src("components/tools/BackgroundRemover.js").includes("raw.matted = guidedAlpha(raw.data, raw.data, raw.width, raw.height)"));
 ck("sliders re-run on the matted matte", src("components/tools/BackgroundRemover.js").includes("refineAlpha(raw.matted || raw.data"));
-ck("best-quality model is the default", src("components/tools/BackgroundRemover.js").includes('const [model, setModel] = useState("large")'));
-ck("three honest model tiers", src("components/tools/BackgroundRemover.js").includes("Studio-class hair & edge detail"));
+ck("memory-friendly best-quality tier is the default", src("components/tools/BackgroundRemover.js").includes('const [model, setModel] = useState("medium")'));
+ck("three honest model tiers", src("components/tools/BackgroundRemover.js").includes("Hair/fur-grade edges, memory-friendly — recommended") && src("components/tools/BackgroundRemover.js").includes("fp32 detail for desktops with RAM to spare"));
+const bgSrc = src("components/tools/BackgroundRemover.js");
+ck("a failing tier auto-falls back down the chain", bgSrc.includes('const tiers = model === "large" ? ["large", "medium", "small"]') && bgSrc.includes("if (!blob) throw lastErr"));
+ck("the user is told when a fallback produced the cut-out", bgSrc.includes("so the ${usedTier} model produced this cut-out"));
+ck("matte post-processing is guarded (never loses a good cut-out)", bgSrc.includes("matte post-processing skipped:") && bgSrc.includes("setCutout({ blob, url: URL.createObjectURL(blob) });"));
+ck("matting memory guard covers phones (4 MP)", bgSrc.includes("if (n > 4_000_000) return out;"));
 const gm = (w, h, fn) => { const d = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const [r, g, b, a] = fn(x, y); d[(y * w + x) * 4] = r; d[(y * w + x) * 4 + 1] = g; d[(y * w + x) * 4 + 2] = b; d[(y * w + x) * 4 + 3] = a; } return d; };
 // flat grey photo, noisy mask → matting must smooth the mask
 const flatGuide = gm(32, 32, (x, y) => [120, 120, 120, ((x + y) % 2 ? 235 : 205)]);

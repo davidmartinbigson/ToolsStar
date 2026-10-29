@@ -319,26 +319,32 @@ function ocrPreprocessPixels(data, w, h, opts = {}) {
    words and symbol-only tokens (keeping real connectors like & and /),
    then rebuilds the lines so no empty lines are left behind.            */
 function ocrCleanText(data, opts = {}) {
-  const { minConf = 65, dropSymbols = true, keep = ["&", "/", "-", "–", "—", "•", "·", "%"] } = opts;
+  const { minConf = 50, dropSymbols = true, keep = ["&", "/", "-", "–", "—", "•", "·", "%"] } = opts;
   const lines = data?.lines || [];
   const out = [];
-  let hidden = 0;
+  const hiddenWords = [];
   for (const line of lines) {
     const kept = (line.words || [])
       .filter((w) => {
         const t = String(w?.text || "").trim();
         if (!t) return false;
-        const alnum = (t.match(/[\p{L}\p{N}]/gu) || []).length;
-        const symbolic = alnum === 0 && !keep.includes(t);
+        const core = t.replace(/[^\p{L}\p{N}]/gu, "");
+        const letters = (t.match(/\p{L}/gu) || []).length;
+        const symbolic = core.length === 0 && !keep.includes(t);
+        // Real words (3+ chars, mostly letters — names like "Shayan", "Maham")
+        // survive no matter how unsure the engine is: the confidence bar may
+        // only cut symbol-only glyphs and non-word fragments, never a name.
+        const digits = (t.match(/\p{N}/gu) || []).length;
+        const plausible = core.length >= 3 && (letters / core.length >= 0.8 || digits / core.length >= 0.8);
         const conf = typeof w.confidence === "number" ? w.confidence : 100;
-        const ok = conf >= minConf && !(dropSymbols && symbolic);
-        if (!ok) hidden++;
+        const ok = !(dropSymbols && symbolic) && (plausible || conf >= minConf);
+        if (!ok) hiddenWords.push(t);
         return ok;
       })
       .map((w) => String(w.text).trim());
     if (kept.length) out.push(kept.join(" "));
   }
-  return { text: out.join("\n"), hidden };
+  return { text: out.join("\n"), hidden: hiddenWords.length, hiddenWords };
 }
 
 /* ── Pure handwriting/numbers helpers (no DOM — pinned by tests) ──────────
@@ -392,8 +398,9 @@ export function ImageToText() {
   const [rect, setRect] = useState(null);
   const [rectOnly, setRectOnly] = useState(true);
   const [clean, setClean] = useState(true);
-  const [minConf, setMinConf] = useState(65);
+  const [minConf, setMinConf] = useState(50);
   const [hidden, setHidden] = useState(null);
+  const [hiddenWords, setHiddenWords] = useState([]);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(null);
   const [stage, setStage] = useState("");
@@ -426,7 +433,7 @@ export function ImageToText() {
   };
 
   const run = async () => {
-    setBusy(true); setError(""); setText(""); setPct(1); setConfidence(null);
+    setBusy(true); setError(""); setText(""); setPct(1); setConfidence(null); setHiddenWords([]);
     try {
       setStage("Loading the OCR brain (first use downloads language data)…");
       await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js");
@@ -494,9 +501,11 @@ export function ImageToText() {
       if (clean && cleaned.text.trim()) {
         setText(fix(cleaned.text));
         setHidden(cleaned.hidden);
+        setHiddenWords(cleaned.hiddenWords);
       } else {
         setText(fix(data.text.trim()));
         setHidden(clean ? cleaned.hidden : 0);
+        setHiddenWords(clean ? cleaned.hiddenWords : []);
       }
       setStage(`Done${pre ? (pre.binarized ? " — scan was binarised for ink-on-paper reading" : " — scan enhanced (grayscale + contrast)") : ""}. Edit anything below, then copy or download.`);
     } catch (e) { setError(friendlyError(e, "OCR failed in this browser. Try Chrome/Edge on desktop.")); setStage(""); setPct(null); }
@@ -559,7 +568,7 @@ export function ImageToText() {
                 </select></div>
               <div className="flex items-end gap-2">
                 <button onClick={run} disabled={busy} className={btnP}><Icon name="type" size={16} /> {busy ? "Reading…" : "Extract text"}</button>
-                <button onClick={() => { setItem(null); setText(""); setRot(0); setConfidence(null); setRect(null); setHidden(null); }} className={btnGhost}><Icon name="trash" size={15} /> New</button>
+                <button onClick={() => { setItem(null); setText(""); setRot(0); setConfidence(null); setRect(null); setHidden(null); setHiddenWords([]); }} className={btnGhost}><Icon name="trash" size={15} /> New</button>
               </div>
             </div>
 
@@ -606,7 +615,7 @@ export function ImageToText() {
                 </label>
                 <div className="mt-2.5">
                   <label className="flex items-center justify-between text-sm font-semibold text-white">
-                    Hide words below confidence <span className="rounded-md bg-cyan-400/15 px-2 py-0.5 text-xs font-bold text-cyan-300">{minConf}%</span>
+                    Hide non-word fragments below confidence <span className="rounded-md bg-cyan-400/15 px-2 py-0.5 text-xs font-bold text-cyan-300">{minConf}%</span>
                   </label>
                   <input type="range" min="40" max="90" step="5" value={minConf} disabled={busy || !clean} onChange={(e) => setMinConf(+e.target.value)} className="mt-2 w-full disabled:opacity-40" />
                 </div>
@@ -638,6 +647,12 @@ export function ImageToText() {
                 <span className="text-slate-400"> · {hidden} decoration/low-confidence word{hidden === 1 ? "" : "s"} hidden{clean ? " (uncheck Auto-clean for the raw extraction)" : ""}</span>
               )}
             </p>
+            {hiddenWords.length > 0 && (
+              <details className="mt-1 text-xs text-slate-500">
+                <summary className="cursor-pointer select-none hover:text-slate-300">{hiddenWords.length} hidden word{hiddenWords.length === 1 ? "" : "s"} — show what was cut</summary>
+                <p className="mt-1 break-words font-mono text-[11px] text-slate-400">{hiddenWords.join(" · ")}</p>
+              </details>
+            )}
             {text && (
               <div className="mt-3 flex flex-wrap gap-2.5">
                 <button onClick={async () => { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }} className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.06] border border-white/10 px-4 py-2.5 text-sm font-semibold text-white hover:border-cyan-400/50"><Icon name={copied ? "check" : "copy"} size={15} /> {copied ? "Copied!" : "Copy text"}</button>

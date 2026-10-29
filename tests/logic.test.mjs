@@ -7,6 +7,7 @@
 // Browser-only tools (video, canvas, WebAssembly, MediaRecorder) are not
 // covered — they need a real browser.
 
+import { existsSync } from "node:fs";
 import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, src } from "./pureSource.mjs";
 
 let pass = 0;
@@ -416,6 +417,43 @@ for (const host of hostsUsed) {
   ck(`${host} is preconnected`, preconnected.has(host), `add it to CDN_ORIGINS in lib/site.js`);
 }
 ck("CDN_ORIGINS are all https", site.CDN_ORIGINS.every((o) => o.startsWith("https://")));
+
+/* ═════════ 20. Editorial layer — the AdSense "content depth" bar ════════════
+   Tool-only sites are the category most often rejected for "low value
+   content", so the guides are part of the product now. These assertions keep
+   them honest: substantial length, real structure, a working link to the tool
+   they cover, alt text on every image, and no forbidden geo wording.         */
+
+console.log("\n20. Editorial layer (blog)");
+const { ARTICLES, getArticle, relatedArticles } = await import("../lib/articles.js");
+const { TOOLS } = await import("../lib/tools.js");
+const toolSlugs = new Set(TOOLS.map((t) => t.slug));
+
+ck("the blog has at least 10 guides", ARTICLES.length >= 10, String(ARTICLES.length));
+for (const a of ARTICLES) {
+  const t = `${a.slug}:`;
+  const h2s = a.blocks.filter((b) => b.h2).length;
+  const faqs = a.blocks.find((b) => b.faq)?.faq?.length || 0;
+  ck(`${t} substantial (≥800 words)`, a.wordCount >= 800, String(a.wordCount));
+  ck(`${t} reading time sane`, a.readingMins >= 3 && a.readingMins <= 15, String(a.readingMins));
+  ck(`${t} ≥4 H2 sections`, h2s >= 4, String(h2s));
+  ck(`${t} ≥3 FAQs`, faqs >= 3, String(faqs));
+  ck(`${t} carries measured/tested evidence`, a.blocks.some((b) => b.note || b.table));
+  ck(`${t} links to a real tool`, toolSlugs.has(a.tool), String(a.tool));
+  ck(`${t} unique title`, ARTICLES.filter((x) => x.title === a.title).length === 1);
+  ck(`${t} unique slug`, ARTICLES.filter((x) => x.slug === a.slug).length === 1);
+  if (a.hero) ck(`${t} hero file exists on disk`, existsSync("public" + a.hero), a.hero);
+  if (a.hero) ck(`${t} hero has alt text`, Boolean(a.heroAlt), "add heroAlt to lib/articles.js");
+  ck(`${t} description is a real summary`, a.description.length > 80 && a.description.length < 230, String(a.description.length));
+  ck(`${t} no geo wording in body`, !/Pakistan|Karachi|\+92\b|Rozee\.pk/i.test(JSON.stringify(a.blocks)));
+}
+ck("at most one guide per tool (the tool-page rail stays unambiguous)", (() => {
+  const seen = new Set();
+  return ARTICLES.every((a) => (seen.has(a.tool) ? false : (seen.add(a.tool), true)));
+})());
+ck("related reading never includes the article itself", ARTICLES.every((a) => !relatedArticles(a.slug).some((r) => r.slug === a.slug)));
+ck("related reading offers 3", ARTICLES.every((a) => relatedArticles(a.slug).length === 3));
+ck("getArticle resolves every slug", ARTICLES.every((a) => getArticle(a.slug)?.slug === a.slug));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

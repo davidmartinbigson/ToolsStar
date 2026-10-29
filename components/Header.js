@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/tools/background-remover", label: "Background Remover" },
   { href: "/tools/image-compressor", label: "Image Compressor" },
   { href: "/tools/image-to-pdf", label: "Image to PDF" },
+  { href: "/blog", label: "Guides" },
 ];
 
 export default function Header() {

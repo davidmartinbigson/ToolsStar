@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Icon } from "./icons";
 import ToolCard from "./ToolCard";
 import AdSlot from "./AdSlot";
+import { ARTICLES } from "@/lib/articles";
 import { relatedTools } from "@/lib/tools";
 import { SITE_URL } from "@/lib/site";
 
@@ -11,6 +12,10 @@ import { SITE_URL } from "@/lib/site";
 
 export default function ToolShell({ tool, intro, steps, features, faqs, children }) {
   const url = `${SITE_URL}/tools/${tool.slug}`;
+  // Editorial cross-link: tools with a measured guide get a visible rail to it,
+  // and the guide links back. Reviewers (and readers) should never hit a
+  // tool page that is interface-only.
+  const guide = ARTICLES.find((a) => a.tool === tool.slug);
   const jsonLd = [
     {
       "@context": "https://schema.org",
@@ -83,6 +88,19 @@ export default function ToolShell({ tool, intro, steps, features, faqs, children
           <p className="mt-2 max-w-3xl text-[15px] leading-relaxed text-slate-400">{intro}</p>
         </div>
       </div>
+
+      {guide && (
+        <Link
+          href={`/blog/${guide.slug}`}
+          className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border border-violet-400/25 bg-violet-400/[0.06] px-4 py-3 transition hover:border-violet-400/50 hover:bg-violet-400/[0.1]"
+        >
+          <span className="rounded-full bg-violet-400/15 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-violet-300">
+            Tested guide
+          </span>
+          <span className="text-sm font-semibold text-slate-200">{guide.title}</span>
+          <span className="ml-auto text-sm font-bold text-violet-300">Read →</span>
+        </Link>
+      )}
 
       <div className="mt-5 flex flex-wrap gap-2">
         {[

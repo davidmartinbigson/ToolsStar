@@ -1,5 +1,6 @@
 import { SITE_URL } from "@/lib/site";
 import { TOOLS } from "@/lib/tools";
+import { ARTICLES } from "@/lib/articles";
 
 // Informational / legal pages. Kept here (rather than hardcoded per page) so
 // the sitemap can never drift out of sync when a new one is added.
@@ -27,6 +28,13 @@ export default function sitemap() {
       lastModified: now,
       changeFrequency: p.changeFrequency,
       priority: p.priority,
+    })),
+    { url: `${SITE_URL}/blog`, lastModified: now, changeFrequency: "weekly", priority: 0.7 },
+    ...ARTICLES.map((a) => ({
+      url: `${SITE_URL}/blog/${a.slug}`,
+      lastModified: new Date(a.published),
+      changeFrequency: "monthly",
+      priority: 0.65,
     })),
   ];
 }

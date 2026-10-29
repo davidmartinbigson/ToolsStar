@@ -62,6 +62,7 @@ export default function Footer() {
             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-200">Tools Stars</h3>
             <ul className="mt-4 space-y-2.5 text-sm text-slate-400">
               <li><Link href="/tools" className="hover:text-amber-300 transition">All Tools</Link></li>
+              <li><Link href="/blog" className="hover:text-amber-300 transition">Guides & Articles</Link></li>
               <li><Link href="/about" className="hover:text-amber-300 transition">About Us</Link></li>
               <li><Link href="/contact" className="hover:text-amber-300 transition">Contact</Link></li>
               <li><Link href="/#how-it-works" className="hover:text-amber-300 transition">How It Works</Link></li>

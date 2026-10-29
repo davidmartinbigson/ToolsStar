@@ -135,7 +135,7 @@ function guidedAlpha(rgb, alpha, w, h, opts = {}) {
   const { radius = 4, eps = 0.02 } = opts;
   const n = w * h;
   const out = new Uint8ClampedArray(alpha);
-  if (n > 8_000_000) return out; // memory guard: skip matting on giant images
+  if (n > 4_000_000) return out; // memory guard: skip matting on giant images
   const I = new Float32Array(n);
   const P = new Float32Array(n);
   const II = new Float32Array(n);
@@ -174,7 +174,7 @@ export default function BackgroundRemover() {
   const [file, setFile] = useState(null);
   const [srcUrl, setSrcUrl] = useState("");
   const [dims, setDims] = useState(null);
-  const [model, setModel] = useState("large");
+  const [model, setModel] = useState("medium");
   const [working, setWorking] = useState(false);
   const [stage, setStage] = useState("");
   const [progress, setProgress] = useState(null);
@@ -188,6 +188,7 @@ export default function BackgroundRemover() {
   const [finalBlob, setFinalBlob] = useState(null);
   const [finalUrl, setFinalUrl] = useState("");
   const [error, setError] = useState("");
+  const [tierNote, setTierNote] = useState("");
   const seqRef = useRef(0);
 
   const onFiles = useCallback(async (files) => {
@@ -232,36 +233,71 @@ export default function BackgroundRemover() {
         mod.default;
       if (typeof removeBackground !== "function") throw new Error("AI engine failed to load.");
 
-      const blob = await removeBackground(file, {
-        model,
-        progress: (key, current, total) => {
-          if (seqRef.current !== seq) return;
-          const isCompute = String(key).startsWith("compute");
-          const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-          if (isCompute) {
-            setStage("AI is separating subject from background & refining edges…");
-            setProgress(82 + Math.round(pct * 0.18));
-          } else {
-            setStage("Downloading AI model (one-time)…");
-            setProgress(Math.min(80, Math.max(4, Math.round(pct * 0.8))));
-          }
-        },
-      });
+      // The fp32 tier can exceed a phone's WASM memory and a blocked CDN can
+      // kill the download, so a failure automatically walks down the tiers
+      // instead of showing the user a dead end.
+      const tiers = model === "large" ? ["large", "medium", "small"] : model === "medium" ? ["medium", "small"] : ["small"];
+      let blob = null;
+      let usedTier = null;
+      let lastErr = null;
+      for (const tier of tiers) {
+        if (seqRef.current !== seq) return;
+        try {
+          if (tiers.indexOf(tier) > 0) setStage(`The ${tiers[0]} model failed on this device — retrying with the ${tier} model…`);
+          blob = await removeBackground(file, {
+            model: tier,
+            progress: (key, current, total) => {
+              if (seqRef.current !== seq) return;
+              const isCompute = String(key).startsWith("compute");
+              const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+              if (isCompute) {
+                setStage("AI is separating subject from background & refining edges…");
+                setProgress(82 + Math.round(pct * 0.18));
+              } else {
+                setStage("Downloading AI model (one-time)…");
+                setProgress(Math.min(80, Math.max(4, Math.round(pct * 0.8))));
+              }
+            },
+          });
+          usedTier = tier;
+          break;
+        } catch (e) {
+          lastErr = e;
+          console.warn(`background-removal tier "${tier}" failed:`, e);
+        }
+      }
+      if (!blob) throw lastErr || new Error("AI engine could not run.");
+      setTierNote(
+        usedTier !== model
+          ? `Heads-up: the ${model} model could not run on this device, so the ${usedTier} model produced this cut-out.`
+          : ""
+      );
 
       if (seqRef.current !== seq) return;
-      const raw = await blobToImageData(blob);
-      if (seqRef.current !== seq) return;
       // Edge-mat the mask against the photo's own colours once per run; the
-      // cleanup sliders then re-run only the cheap alpha passes on top.
-      raw.matted = guidedAlpha(raw.data, raw.data, raw.width, raw.height);
-      rawRef.current = raw;
-      applyRefined(raw, { strict, soften, despeckle });
+      // cleanup sliders then re-run only the cheap alpha passes on top. The
+      // whole post-pass is guarded: if this device cannot hold the buffers,
+      // the raw (still good) cut-out is kept instead of losing the result.
+      let raw = null;
+      try {
+        raw = await blobToImageData(blob);
+        raw.matted = guidedAlpha(raw.data, raw.data, raw.width, raw.height);
+      } catch (e) {
+        console.warn("matte post-processing skipped:", e);
+        raw = null;
+      }
+      if (raw) {
+        rawRef.current = raw;
+        applyRefined(raw, { strict, soften, despeckle });
+      } else {
+        rawRef.current = null;
+        setCutout({ blob, url: URL.createObjectURL(blob) });
+      }
       setProgress(100);
-      setStage("Done! The matte is auto-cleaned — tune it below, pick a background, or download the transparent PNG.");
     } catch (e) {
       console.error(e);
       setError(
-        "Background removal failed. This usually means the AI model could not download (check your connection / ad-blocker) or the image was too large for your device's memory. Try the Fast model or a smaller photo."
+        "Background removal failed on every on-device model tier. The usual causes: an ad-blocker or firewall blocking cdn.jsdelivr.net / staticimgly.com (the model download), or a photo too large for this device's memory. Allow those hosts, try a smaller photo, or open the page on a desktop browser."
       );
       setStage("");
       setProgress(null);
@@ -396,8 +432,8 @@ export default function BackgroundRemover() {
             <div className="mt-2.5 grid grid-cols-3 gap-2">
               {[
                 ["small", "Fast", "Quickest download, fine for simple backgrounds"],
-                ["medium", "Balanced", "Middle ground for busy backgrounds"],
-                ["large", "Best quality ★", "Studio-class hair & edge detail — larger one-time download, cached after"],
+                ["medium", "Best quality ★", "Hair/fur-grade edges, memory-friendly — recommended"],
+                ["large", "Maximum", "fp32 detail for desktops with RAM to spare"],
               ].map(([val, title, desc]) => (
                 <button
                   key={val}
@@ -427,6 +463,11 @@ export default function BackgroundRemover() {
               </button>
             </div>
 
+            {tierNote && !working && (
+              <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] px-3.5 py-2.5 text-xs leading-relaxed text-amber-200" role="status">
+                {tierNote}
+              </p>
+            )}
             {(working || stage) && (
               <div className="mt-5" role="status" aria-live="polite">
                 {progress != null && (

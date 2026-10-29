@@ -311,6 +311,36 @@ function ocrPreprocessPixels(data, w, h, opts = {}) {
   return { data: out, threshold, binarized: binarize };
 }
 
+/* ── Pure OCR text cleaner (no DOM — pinned by tests) ────────────────────
+   Cards, posters and scans are full of things that look like text to an
+   OCR engine but are not: corner flourishes, ❖ dividers, little icons,
+   watermark glyphs. Tesseract reports a confidence per word, and decorative
+   garbage almost always scores low, so the cleaner drops low-confidence
+   words and symbol-only tokens (keeping real connectors like & and /),
+   then rebuilds the lines so no empty lines are left behind.            */
+function ocrCleanText(data, opts = {}) {
+  const { minConf = 65, dropSymbols = true, keep = ["&", "/", "-", "–", "—", "•", "·", "%"] } = opts;
+  const lines = data?.lines || [];
+  const out = [];
+  let hidden = 0;
+  for (const line of lines) {
+    const kept = (line.words || [])
+      .filter((w) => {
+        const t = String(w?.text || "").trim();
+        if (!t) return false;
+        const alnum = (t.match(/[\p{L}\p{N}]/gu) || []).length;
+        const symbolic = alnum === 0 && !keep.includes(t);
+        const conf = typeof w.confidence === "number" ? w.confidence : 100;
+        const ok = conf >= minConf && !(dropSymbols && symbolic);
+        if (!ok) hidden++;
+        return ok;
+      })
+      .map((w) => String(w.text).trim());
+    if (kept.length) out.push(kept.join(" "));
+  }
+  return { text: out.join("\n"), hidden };
+}
+
 export function ImageToText() {
   const [item, setItem] = useState(null);
   const [lang, setLang] = useState("eng");
@@ -319,6 +349,9 @@ export function ImageToText() {
   const [layout, setLayout] = useState("3");
   const [rot, setRot] = useState(0);
   const [confidence, setConfidence] = useState(null);
+  const [clean, setClean] = useState(true);
+  const [minConf, setMinConf] = useState(65);
+  const [hidden, setHidden] = useState(null);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(null);
   const [stage, setStage] = useState("");
@@ -386,7 +419,14 @@ export function ImageToText() {
 
       if (!data.text.trim()) throw new Error("No readable text found. Try a sharper, straight, well-lit photo of the document — or rotate it upright above.");
       setConfidence(Math.round(data.confidence));
-      setText(data.text.trim());
+      const cleaned = ocrCleanText(data, { minConf });
+      if (clean && cleaned.text.trim()) {
+        setText(cleaned.text);
+        setHidden(cleaned.hidden);
+      } else {
+        setText(data.text.trim());
+        setHidden(clean ? cleaned.hidden : 0);
+      }
       setStage(`Done${pre ? (pre.binarized ? " — scan was binarised for ink-on-paper reading" : " — scan enhanced (grayscale + contrast)") : ""}. Edit anything below, then copy or download.`);
     } catch (e) { setError(friendlyError(e, "OCR failed in this browser. Try Chrome/Edge on desktop.")); setStage(""); setPct(null); }
     finally { setBusy(false); }
@@ -437,7 +477,7 @@ export function ImageToText() {
                   <select value={layout} onChange={(e) => setLayout(e.target.value)} disabled={busy} className={sel}>
                     <option value="3">Auto (mixed page)</option>
                     <option value="6">One block of text</option>
-                    <option value="4">Single column</option>
+                    <option value="4">Single column / centred card</option>
                     <option value="7">Single line</option>
                     <option value="11">Sparse words (signs, labels)</option>
                   </select></div>
@@ -452,10 +492,24 @@ export function ImageToText() {
                 {rot !== 0 && <span className="text-[11px] font-bold text-cyan-300">currently {rot}°</span>}
                 <span className="text-[11px] text-slate-500">— turn sideways scans upright before reading</span>
               </div>
+              <div className="mt-3 border-t border-white/[0.07] pt-3">
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                  <input type="checkbox" checked={clean} onChange={(e) => setClean(e.target.checked)} className="h-4 w-4" disabled={busy} />
+                  Auto-clean: ignore icons, borders & decoration glyphs
+                </label>
+                <div className="mt-2.5">
+                  <label className="flex items-center justify-between text-sm font-semibold text-white">
+                    Hide words below confidence <span className="rounded-md bg-cyan-400/15 px-2 py-0.5 text-xs font-bold text-cyan-300">{minConf}%</span>
+                  </label>
+                  <input type="range" min="40" max="90" step="5" value={minConf} disabled={busy || !clean} onChange={(e) => setMinConf(+e.target.value)} className="mt-2 w-full disabled:opacity-40" />
+                </div>
+              </div>
               <p className="mt-2.5 text-xs leading-relaxed text-slate-500">
                 Enhancement greys the scan, stretches its contrast, crisps glyph edges and — when the page is
                 genuinely ink-on-paper — binarises it with Otsu's threshold. Small photos are upscaled up to 3×
-                first, because OCR reads 30px text far better than 10px text.
+                first, because OCR reads 30px text far better than 10px text. Auto-clean then drops the words the
+                engine read from corner flourishes, dividers and icons (they score low confidence), keeping real
+                connectors like & and / — so cards and posters come out as clean text.
               </p>
             </div>
             {(busy || stage) && <div className="mt-4" role="status">{pct != null && <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-cyan-400 transition-all" style={{ width: `${pct}%` }} /></div>}<p className="mt-2 text-xs capitalize text-slate-400">{stage}</p></div>}
@@ -469,6 +523,9 @@ export function ImageToText() {
                 <span className={confidence >= 75 ? "text-emerald-300" : confidence >= 50 ? "text-amber-300" : "text-rose-300"}>
                   {" "}· engine confidence {confidence}%{confidence < 60 ? " — low: try Rotate, a sharper photo, or the Printed-document scan type" : ""}
                 </span>
+              )}
+              {hidden != null && hidden > 0 && (
+                <span className="text-slate-400"> · {hidden} decoration/low-confidence word{hidden === 1 ? "" : "s"} hidden{clean ? " (uncheck Auto-clean for the raw extraction)" : ""}</span>
               )}
             </p>
             {text && (

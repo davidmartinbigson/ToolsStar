@@ -733,6 +733,39 @@ ck("rotation controls exist for sideways scans", ocrSrc.includes("currently {rot
 ck("confidence readout warns when recognition is shaky", ocrSrc.includes("engine confidence {confidence}%") && ocrSrc.includes("confidence < 60"));
 ck("scan-type + layout selectors wired", ocrSrc.includes("Printed document (binarise)") && ocrSrc.includes("Sparse words (signs, labels)"));
 
+/* ═════════ 30. OCR text cleaner — icons & decorations stay out ═════════
+   Wedding cards, posters and scans surround real text with flourishes,
+   dividers and icons that Tesseract happily "reads". The cleaner drops
+   low-confidence words and symbol-only tokens, rebuilds lines without
+   gaps, and reports how much it hid. Pinned on a synthetic card.         */
+
+console.log("\n30. OCR text cleaner");
+const card = {
+  lines: [
+    { words: [{ text: "IN", confidence: 96 }, { text: "THE", confidence: 95 }, { text: "NAME", confidence: 97 }] },
+    { words: [{ text: "❖", confidence: 41 }, { text: "───", confidence: 22 }] },
+    { words: [{ text: "VENUE", confidence: 92 }, { text: "&", confidence: 88 }, { text: "TIME", confidence: 90 }] },
+    { words: [{ text: "Alishba", confidence: 38 }, { text: "Sajid", confidence: 44 }] },
+    { words: [{ text: "®", confidence: 81 }] },
+    { words: [{ text: "KARACHI", confidence: 89 }] },
+  ],
+};
+const cleanedCard = ocr.ocrCleanText(card, { minConf: 65 });
+ck("clean text keeps the confident real words", cleanedCard.text === "IN THE NAME\nVENUE & TIME\nKARACHI", JSON.stringify(cleanedCard.text));
+ck("divider / icon lines disappear entirely", !cleanedCard.text.includes("❖") && !cleanedCard.text.includes("®"));
+ck("hidden count reports what was dropped", cleanedCard.hidden === 5, String(cleanedCard.hidden));
+ck("real connectors survive the symbol filter", cleanedCard.text.includes("&"));
+const rawish = ocr.ocrCleanText(card, { minConf: 0, dropSymbols: false });
+ck("raw mode keeps everything", rawish.hidden === 0 && rawish.text.split("\n").length === 6, String(rawish.text.split("\n").length));
+const strict = ocr.ocrCleanText(card, { minConf: 90 });
+ck("raising the bar hides more", strict.hidden > cleanedCard.hidden, `${strict.hidden} vs ${cleanedCard.hidden}`);
+ck("empty or malformed data is safe", ocr.ocrCleanText(null, {}).text === "" && ocr.ocrCleanText({ lines: [{}] }, {}).text === "");
+ck("unicode letters and digits count as real text", ocr.ocrCleanText({ lines: [{ words: [{ text: "اردو", confidence: 90 }, { text: "10TH", confidence: 90 }] }] }, {}).text === "اردو 10TH");
+const cleanSrc = src("components/tools/quickTools.js");
+ck("auto-clean toggle + confidence slider wired", cleanSrc.includes("Auto-clean: ignore icons, borders & decoration glyphs") && cleanSrc.includes("Hide words below confidence"));
+ck("result note says how much was hidden", cleanSrc.includes("decoration/low-confidence word"));
+ck("centred-card layout hint exists", cleanSrc.includes("Single column / centred card"));
+
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 
 const total = pass + fails.length;

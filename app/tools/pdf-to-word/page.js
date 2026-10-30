@@ -27,6 +27,8 @@ export default function Page() {
         "Bold and italic character formatting carried across — even when the PDF hides bold behind a font name",
         "Exact PDF type sizes and ink colours sampled from the rendered page, so the Word file looks like the PDF",
         "Centred and right-aligned lines keep their alignment; vertical rhythm becomes paragraph spacing",
+        "Symbol-font bullet glyphs become real Word bullets — no more question marks in your lists",
+        "Rules drawn under PDF headings become heading borders, with an Always-underline option for the classic CV look",
         "Optional page breaks so each PDF page starts a fresh Word page",
         "Line reflow: wrapped PDF lines merge back into proper paragraphs",
         "Live counts of pages, headings, paragraphs and words before you download",

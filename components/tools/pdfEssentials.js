@@ -706,11 +706,50 @@ function pdfStyledLines(items, styles) {
   }
   return lines
     .sort((a, b) => b.y - a.y)
-    .map((l) => ({
-      text: pdfJoinParts(l.parts), size: l.size, bold: l.bold, italic: l.italic, y: l.y,
-      left: l.left ?? 0, right: l.right ?? 0, fonts: l.fonts, family: l.family,
-    }))
+    .map((l) => {
+      // Symbol fonts encode bullets as private-use codepoints (U+F0B7 etc.)
+      // which Word shows as "?" — recognise them and emit real bullets.
+      let text = pdfJoinParts(l.parts);
+      let bullet = false;
+      const bm = text.match(/^([\uE000-\uF8FF\u2022\u2023\u2043\u2219\u25AA\u25B8\u25CF\u25CB\u25A0\u25A1\uF0A7\uF0B7•●○◦▪‣·])\s*/u);
+      if (bm) { bullet = true; text = text.slice(bm[0].length); }
+      text = text.replace(/[\uE000-\uF8FF]/g, "").trim();
+      return {
+        text, size: l.size, bold: l.bold, italic: l.italic, y: l.y, bullet,
+        left: l.left ?? 0, right: l.right ?? 0, fonts: l.fonts, family: l.family,
+      };
+    })
     .filter((l) => l.text.trim());
+}
+
+/* Horizontal rules (heading underlines) are vector drawings, not text, so they
+   never appear in getTextContent. They arrive either as thin rectangles or as
+   batched constructPath segments; both are decoded here into rule records a
+   heading can claim as its bottom border. Pure — pinned by tests.          */
+function pdfFindRules(namedOps, pageWidth) {
+  const pw = pageWidth || 612;
+  const rules = [];
+  let color = null;
+  const push = (x, y, w, h) => { if (w >= pw * 0.25 && h <= 4) rules.push({ x, y, w, h: Math.max(h, 0.6), color }); };
+  for (const { op, args } of namedOps || []) {
+    if (op === "setStrokeRGBColor" || op === "setFillRGBColor") {
+      const [r, g, b] = args || [];
+      if ([r, g, b].every((v) => typeof v === "number")) color = [r, g, b].map((v) => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, "0")).join("");
+      continue;
+    }
+    if (op === "rectangle" && args?.length >= 4) { push(args[0], args[1], args[2], Math.abs(args[3])); continue; }
+    if (op === "constructPath" && args?.length >= 3) {
+      const [codes, xs, ys] = args;
+      const ymin = Math.min(...ys), ymax = Math.max(...ys);
+      const xmin = Math.min(...xs), xmax = Math.max(...xs);
+      if (ymax - ymin <= 4) { push(xmin, ymin, xmax - xmin, ymax - ymin); continue; }
+      for (let i = 1; i < codes.length; i += 1) {
+        if (codes[i] === codes[0]) continue;
+        if (Math.abs(ys[i] - ys[i - 1]) < 0.5 && Math.abs(xs[i] - xs[i - 1]) >= pw * 0.25) push(Math.min(xs[i], xs[i - 1]), ys[i], Math.abs(xs[i] - xs[i - 1]), 0.8);
+      }
+    }
+  }
+  return rules;
 }
 
 /* Visual-fidelity helpers (pure — pinned by tests). Real PDFs hide emphasis:
@@ -773,7 +812,7 @@ function pdfDocumentStructure(pages, opts = {}) {
         paraFilled = line.right >= pw * 0.82;
       } else {
         flush();
-        para = { page: pi + 1, kind: "p", text: trimmed, size: line.size, bold: emph, italic: line.italic, color: line.color, align: pdfAlignment(line, pw), family: line.family, y: line.y };
+        para = { page: pi + 1, kind: "p", text: trimmed, size: line.size, bold: emph, italic: line.italic, color: line.color, align: pdfAlignment(line, pw), family: line.family, y: line.y, bullet: line.bullet };
         paraFilled = line.right >= pw * 0.82;
       }
     }
@@ -786,6 +825,7 @@ export function PdfToWord() {
   const [item, setItem] = useState(null);
   const [detect, setDetect] = useState(true);
   const [keepStyle, setKeepStyle] = useState(true);
+  const [headRule, setHeadRule] = useState("auto");
   const [pageBreaks, setPageBreaks] = useState(true);
   const [reflow, setReflow] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -870,6 +910,26 @@ export function PdfToWord() {
         }
       }
       const structure = pdfDocumentStructure(pageLines, { reflow, headings: detect, emphasis, pageWidths });
+      // Heading underlines: claim any vector rule drawn just under a heading.
+      if (keepStyle && headRule !== "off") {
+        const lib = await pdfjs();
+        const OPN = {};
+        for (const k in lib.OPS) OPN[lib.OPS[k]] = k;
+        for (let pi = 0; pi < pageObjs.length; pi += 1) {
+          let named = [];
+          try {
+            const ol = await pageObjs[pi].getOperatorList();
+            named = ol.fnArray.map((f, i) => ({ op: OPN[f], args: ol.argsArray[i] }));
+          } catch { continue; }
+          const rules = pdfFindRules(named, pageWidths[pi]);
+          if (!rules.length && headRule === "auto") continue;
+          for (const b of structure.blocks) {
+            if (b.page !== pi + 1 || b.kind === "p") continue;
+            const hit = rules.find((r) => r.y <= b.y && r.y >= b.y - b.size * 1.8 && r.x <= b.left + 40);
+            if (hit || headRule === "always") { b.underline = true; b.ruleColor = hit?.color; b.ruleSize = hit?.h; }
+          }
+        }
+      }
       const words = structure.blocks.reduce((n, b) => n + b.text.split(/\s+/).filter(Boolean).length, 0);
       if (!words) throw new Error("No selectable text found — this PDF is probably scanned images. Convert pages with PDF to JPG, then run them through Image to Text (OCR).");
 
@@ -897,6 +957,17 @@ export function PdfToWord() {
           alignment: ALIGN[b.align] || docx.AlignmentType.LEFT,
           children: [new docx.TextRun(runOpts)],
         };
+        if (b.bullet) paraOpts.bullet = { level: 0 };
+        if (b.underline) {
+          paraOpts.border = {
+            bottom: {
+              color: b.ruleColor || b.color || "000000",
+              space: 2,
+              style: docx.BorderStyle.SINGLE,
+              size: Math.max(4, Math.min(24, Math.round((b.ruleSize || 0.8) * 8))),
+            },
+          };
+        }
         if (b.kind === "h1") paraOpts.heading = docx.HeadingLevel.HEADING_1;
         else if (b.kind === "h2") paraOpts.heading = docx.HeadingLevel.HEADING_2;
         children.push(new docx.Paragraph(paraOpts));
@@ -949,6 +1020,14 @@ export function PdfToWord() {
                   Keep PDF colours, exact sizes & fonts
                 </label>
                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <span className="shrink-0">Heading underlines</span>
+                  <select value={headRule} onChange={(e) => setHeadRule(e.target.value)} disabled={busy || !keepStyle} className="ml-auto w-auto rounded-lg border border-white/10 bg-[#12152e] px-2 py-1 text-xs text-white outline-none focus:border-amber-400/60 disabled:opacity-50">
+                    <option value="auto">Auto — from the PDF's own rules</option>
+                    <option value="always">Always underline headings</option>
+                    <option value="off">No underlines</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
                   <input type="checkbox" checked={reflow} onChange={(e) => setReflow(e.target.checked)} disabled={busy} className="h-4 w-4" />
                   Reflow wrapped lines into paragraphs
                 </label>
@@ -972,7 +1051,10 @@ export function PdfToWord() {
                 heading styles while keeping their PDF size and colour, bold faces are recognised even when the
                 PDF hides them behind font names, centred and right-aligned lines keep their alignment, and the
                 vertical rhythm of the page becomes paragraph spacing — so the Word file looks like the PDF.
-                Scanned (photo-only) PDFs carry no text to convert — use OCR for those.
+                Symbol-font bullet glyphs (the ones Word shows as "?") become real Word bullets, and rules drawn
+                under headings in the PDF become heading bottom borders — or switch Heading underlines to
+                "Always" for a classic underlined-CV look. Scanned (photo-only) PDFs carry no text to convert —
+                use OCR for those.
               </p>
             </div>
           </div>

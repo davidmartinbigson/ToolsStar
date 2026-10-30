@@ -17,12 +17,18 @@ export default function Page() {
       tool={getTool("pdf-to-word")}
       intro="Need a PDF as an editable Word document — to revise a report, reuse a contract clause or reformat an assignment? This converter reads the PDF's real text layer, rebuilds its structure (headings, paragraphs, bold and italics) and writes a genuine .docx file that opens cleanly in Microsoft Word, Google Docs and LibreOffice."
       steps={[
-        { title: "Add a digital PDF", text: "Works on PDFs that contain a real text layer — the kind where you can select words with your cursor. Scanned, photo-only PDFs have no text to convert." },
-        { title: "Choose the structure options", text: "Keep heading detection and line reflow on for articles and reports; switch reflow off for forms where every line break matters." },
-        { title: "Convert and download", text: "Click Convert to Word, watch the page-by-page progress, then download the .docx and proofread it like any draft." },
+        { title: "Upload a PDF (up to 40 MB)", text: "Drop the file or browse — it is parsed entirely in your browser and never leaves your device. Password-protected and corrupted files get a clear message instead of a silent failure." },
+        { title: "Analyze the document", text: "Every page is classified as text, scanned or multi-column; tables, placed images, link annotations and repeating header/footer lines are detected, and you see the report before anything is converted. Choose a page range here if you only need part of the file." },
+        { title: "Convert with the settings you want", text: "Scanned pages can be OCR'd with Tesseract, tables rebuilt as editable Word tables, images embedded in place, columns read in the right order — with colours, sizes, bullets and heading underlines preserved." },
+        { title: "Preview, then download", text: "A structure preview shows exactly what the Word file contains, warnings flag anything approximated (table grids, low-confidence OCR), and the download is a genuine editable .docx." },
       ]}
       features={[
-        "Real .docx output (not a renamed text file) via the open OOXML format",
+        "Real .docx output (not a renamed text file, not a wrapped PDF) via the open OOXML format",
+        "Four-stage workflow: upload → analyze → convert → preview/download, with live progress",
+        "Page-type detection: text pages, scanned pages (OCR with Tesseract) and multi-column layouts",
+        "Tables rebuilt as editable Word tables from shared column gaps; placed images embedded in flow",
+        "Repeating edge lines lifted into real Word headers and footers; link annotations stay clickable",
+        "Page ranges (e.g. 1-3, 7), exact PDF page size and margins in the Word section setup",
         "Heading styles rebuilt from font sizes — H1 and H2, not just big bold text",
         "Bold and italic character formatting carried across — even when the PDF hides bold behind a font name",
         "Exact PDF type sizes and ink colours sampled from the rendered page, so the Word file looks like the PDF",
@@ -40,6 +46,8 @@ export default function Page() {
         { q: "Will tables and columns keep their exact layout?", a: "Not pixel-perfect. A PDF stores positioned fragments, not a table model, so multi-column layouts and tables arrive as reading-order paragraphs. Numbers in tables may need a quick tidy in Word — this is true of every PDF-to-Word converter, desktop suites included." },
         { q: "Does the file get uploaded to a server?", a: "No. The PDF is parsed and the .docx is assembled entirely in your browser using WebAssembly and JavaScript. Nothing is uploaded, which also means very large or confidential documents stay private." },
         { q: "What about password-protected PDFs?", a: "Unlock the PDF first in whatever app you have; encrypted files cannot be opened here because the browser engine is not given the password and never asks for one." },
+        { q: "How are scanned pages handled?", a: "The analyzer flags pages that carry images but no text layer as scanned. With OCR switched on, each scanned page is rendered and read with the Tesseract engine in your browser, and the result warns you when a page's OCR confidence is low so you know where to proofread." },
+        { q: "Why is there no upload server involved?", a: "By design. Documents are parsed, OCR'd and rebuilt entirely on your device, so there is no file to leak, no retention period to worry about and no size queue on a server — the 40 MB limit exists only to keep your own browser comfortable." },
       ]}
       deepDive={toolGuide("pdf-to-word")}
     >

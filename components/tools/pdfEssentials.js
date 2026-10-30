@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import Dropzone from "@/components/Dropzone";
 import { Icon } from "@/components/icons";
-import { formatBytes, downloadBlob, stripExt, friendlyError } from "@/lib/utils";
+import { formatBytes, downloadBlob, stripExt, friendlyError, loadScript } from "@/lib/utils";
 
 /* ── Lazy PDF engines: loaded only when one of these tools is used ── */
 let _pdfLib = null;
@@ -717,6 +717,7 @@ function pdfStyledLines(items, styles) {
       return {
         text, size: l.size, bold: l.bold, italic: l.italic, y: l.y, bullet,
         left: l.left ?? 0, right: l.right ?? 0, fonts: l.fonts, family: l.family,
+        parts: l.parts,
       };
     })
     .filter((l) => l.text.trim());
@@ -821,15 +822,177 @@ function pdfDocumentStructure(pages, opts = {}) {
   return { bodySize, blocks };
 }
 
+/* ── Document analysis layer (pure — pinned by tests) ───────────────────
+   The converter first classifies every page (text / scanned / complex),
+   fixes reading order for multi-column layouts, lifts repeating edge lines
+   into headers/footers, rebuilds tables from shared column gaps, and maps
+   link annotations and placed images onto the block stream.              */
+function pdfParseRange(str, max) {
+  const out = new Set();
+  for (const part of String(str || "").split(",")) {
+    const m = part.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+    if (!m) continue;
+    const a = Math.max(1, Math.min(max, +m[1]));
+    const b = m[2] ? Math.max(1, Math.min(max, +m[2])) : a;
+    for (let i = Math.min(a, b); i <= Math.max(a, b); i += 1) out.add(i);
+  }
+  if (!out.size) for (let i = 1; i <= max; i += 1) out.add(i);
+  return [...out].sort((x, y) => x - y);
+}
+
+function pdfColumnBoundary(lines, pageWidth) {
+  const pw = pageWidth || 612;
+  const sorted = (lines || []).map((l) => l.left).sort((a, b) => a - b);
+  if (sorted.length < 6) return null;
+  let best = null;
+  for (let i = 1; i < sorted.length; i += 1) {
+    const gap = sorted[i] - sorted[i - 1];
+    if (gap >= pw * 0.08 && i >= sorted.length * 0.25 && sorted.length - i >= sorted.length * 0.25) {
+      if (!best || gap > best.gap) best = { gap, cut: (sorted[i] + sorted[i - 1]) / 2 };
+    }
+  }
+  return best ? best.cut : null;
+}
+
+function pdfColumnOrder(lines, pageWidth) {
+  const cut = pdfColumnBoundary(lines, pageWidth);
+  if (cut == null) return lines;
+  const byY = (a, b) => b.y - a.y;
+  return [...lines.filter((l) => l.left < cut).sort(byY), ...lines.filter((l) => l.left >= cut).sort(byY)];
+}
+
+function pdfClassifyPage(lines, imageCount, pageWidth) {
+  const words = (lines || []).reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length, 0);
+  if (words < 5 && (imageCount || 0) > 0) return "scanned";
+  if ((lines || []).length >= 6 && pdfColumnBoundary(lines, pageWidth) != null) return "complex";
+  return "text";
+}
+
+function pdfHeaderFooter(pages, pageHeights) {
+  const counts = new Map();
+  (pages || []).forEach((lines, pi) => {
+    const ph = (pageHeights || [])[pi] || 792;
+    for (const l of lines || []) {
+      const t = l.text.trim();
+      if (!t) continue;
+      const zone = l.y > ph * 0.9 ? "h" : l.y < ph * 0.1 ? "f" : null;
+      if (zone) counts.set(`${zone}|${t}`, (counts.get(`${zone}|${t}`) || 0) + 1);
+    }
+  });
+  const need = Math.max(2, Math.ceil((pages || []).length * 0.6));
+  const header = [], footer = [];
+  for (const [key, n] of counts) if (n >= need) (key[0] === "h" ? header : footer).push(key.slice(2));
+  return { header: [...new Set(header)], footer: [...new Set(footer)] };
+}
+
+function pdfStripHeaderFooter(lines, hf, pageHeight) {
+  const ph = pageHeight || 792;
+  const hs = new Set(hf?.header || []);
+  const fs = new Set(hf?.footer || []);
+  return (lines || []).filter((l) => {
+    const t = l.text.trim();
+    if (l.y > ph * 0.9 && hs.has(t)) return false;
+    if (l.y < ph * 0.1 && fs.has(t)) return false;
+    return true;
+  });
+}
+
+function pdfCells(parts, bounds) {
+  const cells = Array(bounds.length + 1).fill("");
+  for (const part of [...parts].sort((a, b) => a.x - b.x)) {
+    if (!String(part.text || "").trim()) continue;
+    let ci = bounds.length;
+    for (let i = 0; i < bounds.length; i += 1) if (part.x < bounds[i]) { ci = i; break; }
+    cells[ci] = cells[ci] ? `${cells[ci]} ${part.text.trim()}` : part.text.trim();
+  }
+  return cells;
+}
+
+function pdfTableSegments(lines, opts = {}) {
+  const gap = opts.minGap ?? 28;
+  const minRows = opts.minRows ?? 2;
+  const cutsOf = (l) => {
+    const ps = (l.parts || []).filter((q) => String(q.text || "").trim());
+    const cuts = [];
+    for (let i = 1; i < ps.length; i += 1) {
+      const space = ps[i].x - (ps[i - 1].x + (ps[i - 1].w || 0));
+      if (space >= gap) cuts.push((ps[i].x + ps[i - 1].x + (ps[i - 1].w || 0)) / 2);
+    }
+    return { ps, cuts };
+  };
+  const same = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) <= 18);
+  const out = [];
+  let runLines = [];
+  let bounds = null;
+  const flushRun = () => {
+    if (runLines.length >= minRows) out.push({ type: "table", rows: runLines.map((l) => pdfCells(l.parts || [], bounds)) });
+    else if (runLines.length) out.push({ type: "lines", lines: runLines });
+    runLines = [];
+    bounds = null;
+  };
+  for (const line of lines || []) {
+    const { cuts } = cutsOf(line);
+    if (cuts.length >= 1 && (!bounds || same(cuts, bounds))) {
+      if (!bounds) bounds = cuts;
+      runLines.push(line);
+    } else {
+      flushRun();
+      if (cuts.length >= 1) {
+        bounds = cuts;
+        runLines = [line];
+      } else {
+        bounds = null;
+        out.push({ type: "lines", lines: [line] });
+      }
+    }
+  }
+  flushRun();
+  // merge neighbouring line segments
+  const merged = [];
+  for (const seg of out) {
+    if (seg.type === "lines" && merged.length && merged[merged.length - 1].type === "lines") merged[merged.length - 1].lines.push(...seg.lines);
+    else merged.push(seg);
+  }
+  return merged;
+}
+
+function pdfMatchLink(blocks, annots) {
+  for (const b of blocks || []) {
+    if (b.kind === "p" || b.kind === "h1" || b.kind === "h2") {
+      const hit = (annots || []).find((a) => a.url && b.left <= a.x1 && b.right >= a.x0 && b.y >= a.y0 - 6 && b.y <= a.y1 + 6);
+      if (hit) b.link = hit.url;
+    }
+  }
+  return blocks;
+}
+
+function pdfImageItems(namedOps) {
+  const items = [];
+  let tr = null;
+  for (const { op, args } of namedOps || []) {
+    if (op === "transform" && args?.length >= 6) { tr = args; continue; }
+    if (op === "paintImageXObject" && tr) {
+      items.push({ name: args?.[0], x: tr[4], y: tr[5], w: Math.abs(tr[0]), h: Math.abs(tr[3]) });
+      tr = null;
+    }
+  }
+  return items.filter((it) => it.name && it.w >= 24 && it.h >= 24);
+}
+
 export function PdfToWord() {
   const [item, setItem] = useState(null);
+  const [range, setRange] = useState("");
   const [detect, setDetect] = useState(true);
   const [keepStyle, setKeepStyle] = useState(true);
-  const [headRule, setHeadRule] = useState("auto");
-  const [pageBreaks, setPageBreaks] = useState(true);
+  const [keepImages, setKeepImages] = useState(true);
+  const [keepTables, setKeepTables] = useState(true);
+  const [ocrScanned, setOcrScanned] = useState(true);
   const [reflow, setReflow] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [pageBreaks, setPageBreaks] = useState(true);
+  const [headRule, setHeadRule] = useState("auto");
+  const [stage, setStage] = useState("idle");
   const [progress, setProgress] = useState(null);
+  const [analysis, setAnalysis] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const pdfRef = useRef(null);
@@ -837,7 +1000,8 @@ export function PdfToWord() {
   const add = useCallback(async (files) => {
     const file = files?.[0];
     if (!file) return;
-    setError(""); setResult(null); setProgress(null);
+    setError(""); setResult(null); setAnalysis(null); setProgress(null); setStage("idle");
+    if (file.size > 40 * 1024 * 1024) { setError("That PDF is over the 40 MB on-device limit — split it first with our Split PDF tool, then convert the parts."); return; }
     try {
       const lib = await pdfjs();
       const data = new Uint8Array(await file.arrayBuffer());
@@ -849,154 +1013,253 @@ export function PdfToWord() {
     }
   }, []);
 
-  const reset = () => { setItem(null); setResult(null); setProgress(null); setError(""); pdfRef.current = null; };
+  const reset = () => { setItem(null); setResult(null); setAnalysis(null); setProgress(null); setError(""); setStage("idle"); setRange(""); pdfRef.current = null; };
 
-  const run = async () => {
+  const analyze = async () => {
     if (!item || !pdfRef.current) return;
-    setBusy(true); setError(""); setResult(null); setProgress(1);
+    setStage("analyzing"); setError(""); setAnalysis(null); setResult(null); setProgress(1);
     try {
-      const pageLines = [];
-      const pageWidths = [];
-      const pageHeights = [];
-      const pageObjs = [];
-      for (let pageNumber = 1; pageNumber <= item.pages; pageNumber += 1) {
-        const page = await pdfRef.current.getPage(pageNumber);
+      const wanted = pdfParseRange(range, item.pages);
+      const lib = await pdfjs();
+      const OPN = {};
+      for (const k in lib.OPS) OPN[lib.OPS[k]] = k;
+      const pages = [];
+      for (let i = 0; i < wanted.length; i += 1) {
+        const page = await pdfRef.current.getPage(wanted[i]);
         const vp = page.getViewport({ scale: 1 });
-        pageWidths.push(vp.width);
-        pageHeights.push(vp.height);
-        pageObjs.push(page);
         const content = await page.getTextContent();
-        pageLines.push(pdfStyledLines(content.items || [], content.styles || {}));
-        setProgress(Math.round((pageNumber / item.pages) * 40));
-        if (pageNumber % 4 === 0) await new Promise((r) => setTimeout(r, 0));
+        const lines = pdfStyledLines(content.items || [], content.styles || {});
+        let named = [];
+        try {
+          const ol = await page.getOperatorList();
+          named = ol.fnArray.map((f, j) => ({ op: OPN[f], args: ol.argsArray[j] }));
+        } catch { named = []; }
+        const imageItems = pdfImageItems(named);
+        let links = [];
+        try {
+          links = (await page.getAnnotations()).filter((a) => a.subtype === "Link" && a.url && a.rect).map((a) => ({ url: a.url, x0: a.rect[0], y0: a.rect[1], x1: a.rect[2], y1: a.rect[3] }));
+        } catch { links = []; }
+        pages.push({ num: wanted[i], page, lines, width: vp.width, height: vp.height, rules: pdfFindRules(named, vp.width), imageItems, links, kind: pdfClassifyPage(lines, imageItems.length, vp.width) });
+        setProgress(Math.round(((i + 1) / wanted.length) * 100));
       }
-      // Real PDFs hide emphasis: bold often shows up only as a minority font
-      // name with no weight in the font table, so learn those fonts first.
-      const emphasis = detect ? pdfEmphasisFonts(pageLines.flat()) : null;
-      // Visual fidelity: sample each line's ink colour from a rendered page
-      // (capped at 20 pages so huge documents stay fast).
-      if (keepStyle && item.pages <= 20) {
-        for (let pi = 0; pi < pageObjs.length; pi += 1) {
-          const lines = pageLines[pi];
-          if (!lines.length) continue;
-          const scale = 1.5;
-          const rvp = pageObjs[pi].getViewport({ scale });
+      const hf = pdfHeaderFooter(pages.map((p) => p.lines), pages.map((p) => p.height));
+      for (const p of pages) p.lines = pdfStripHeaderFooter(p.lines, hf, p.height);
+      setAnalysis({ pages, hf });
+      setStage("ready"); setProgress(null);
+    } catch (e) {
+      setError(friendlyError(e, "Analysis failed — the PDF may be corrupted."));
+      setStage("idle"); setProgress(null);
+    }
+  };
+
+  const convert = async () => {
+    if (!analysis) return;
+    setStage("converting"); setError(""); setResult(null); setProgress(1);
+    const warnings = [];
+    try {
+      const { pages, hf } = analysis;
+      const emphasis = detect ? pdfEmphasisFonts(pages.flatMap((p) => p.lines)) : null;
+      const scanned = pages.filter((p) => p.kind === "scanned");
+      let worker = null;
+      if (scanned.length && ocrScanned) {
+        setStage("ocr");
+        await loadScript("https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js");
+        worker = await window.Tesseract.createWorker("eng", 1, { logger: (m) => { if (m.status === "recognizing text") setProgress(Math.round(m.progress * 25)); } });
+      } else if (scanned.length) {
+        warnings.push(`${scanned.length} scanned page${scanned.length === 1 ? "" : "s"} skipped — switch on “OCR scanned pages” to read them.`);
+      }
+      const all = [];
+      let tablesFound = 0, imagesFound = 0, linksFound = 0;
+      for (let pi = 0; pi < pages.length; pi += 1) {
+        const p = pages[pi];
+        let lines = p.lines;
+        if (p.kind === "scanned" && worker) {
+          const scale = 2;
+          const rvp = p.page.getViewport({ scale });
           const canvas = document.createElement("canvas");
-          canvas.width = Math.ceil(rvp.width);
-          canvas.height = Math.ceil(rvp.height);
-          try {
-            await pageObjs[pi].render({ canvasContext: canvas.getContext("2d"), viewport: rvp }).promise;
-          } catch { continue; }
-          const ctx = canvas.getContext("2d", { willReadFrequently: true });
-          for (const line of lines) {
-            const x0 = Math.max(0, Math.floor(line.left * scale));
-            const y0 = Math.max(0, Math.floor((pageHeights[pi] - line.y - line.size * 0.2) * scale));
-            const w = Math.min(canvas.width - x0, Math.max(2, Math.ceil((line.right - line.left) * scale)));
-            const h = Math.min(canvas.height - y0, Math.max(2, Math.ceil(line.size * 1.3 * scale)));
-            if (w <= 0 || h <= 0) continue;
-            let px;
-            try { px = ctx.getImageData(x0, y0, w, h).data; } catch { continue; }
-            let r = 0, g = 0, b = 0, n = 0;
-            for (let i = 0; i < px.length; i += 4) {
-              const lum = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
-              if (lum < 200) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n += 1; }
-            }
-            if (n > 4) {
-              const hex = [r / n, g / n, b / n].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
-              if (hex !== "000000") line.color = hex;
-            }
-          }
-          setProgress(40 + Math.round(((pi + 1) / pageObjs.length) * 20));
+          canvas.width = Math.ceil(rvp.width); canvas.height = Math.ceil(rvp.height);
+          await p.page.render({ canvasContext: canvas.getContext("2d"), viewport: rvp }).promise;
+          const { data } = await worker.recognize(canvas);
+          const conf = Math.round(data.confidence || 0);
+          if (conf < 60) warnings.push(`Page ${p.num}: OCR confidence ${conf}% — proofread this page in Word.`);
+          lines = (data.lines || []).map((ln) => {
+            const h = ((ln.bbox?.y1 || 0) - (ln.bbox?.y0 || 0)) / scale || 11;
+            return {
+              text: String(ln.text || "").trim(), size: h, y: p.height - ((ln.bbox?.y0 || 0) + h / 2),
+              left: (ln.bbox?.x0 || 0) / scale, right: (ln.bbox?.x1 || 0) / scale,
+              bold: false, italic: false, bullet: false, fonts: [], family: "sans-serif", parts: [],
+            };
+          }).filter((l) => l.text);
         }
-      }
-      const structure = pdfDocumentStructure(pageLines, { reflow, headings: detect, emphasis, pageWidths });
-      // Heading underlines: claim any vector rule drawn just under a heading.
-      if (keepStyle && headRule !== "off") {
-        const lib = await pdfjs();
-        const OPN = {};
-        for (const k in lib.OPS) OPN[lib.OPS[k]] = k;
-        for (let pi = 0; pi < pageObjs.length; pi += 1) {
-          let named = [];
+        lines = pdfColumnOrder(lines, p.width);
+        if (keepStyle && pages.length <= 20 && lines.length) {
+          const scale = 1.5;
+          const rvp = p.page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(rvp.width); canvas.height = Math.ceil(rvp.height);
           try {
-            const ol = await pageObjs[pi].getOperatorList();
-            named = ol.fnArray.map((f, i) => ({ op: OPN[f], args: ol.argsArray[i] }));
-          } catch { continue; }
-          const rules = pdfFindRules(named, pageWidths[pi]);
-          if (!rules.length && headRule === "auto") continue;
-          for (const b of structure.blocks) {
-            if (b.page !== pi + 1 || b.kind === "p") continue;
-            const hit = rules.find((r) => r.y <= b.y && r.y >= b.y - b.size * 1.8 && r.x <= b.left + 40);
+            await p.page.render({ canvasContext: canvas.getContext("2d"), viewport: rvp }).promise;
+            const ctx = canvas.getContext("2d", { willReadFrequently: true });
+            for (const line of lines) {
+              const x0 = Math.max(0, Math.floor(line.left * scale));
+              const y0 = Math.max(0, Math.floor((p.height - line.y - line.size * 0.2) * scale));
+              const w = Math.min(canvas.width - x0, Math.max(2, Math.ceil((line.right - line.left) * scale)));
+              const h = Math.min(canvas.height - y0, Math.max(2, Math.ceil(line.size * 1.3 * scale)));
+              if (w <= 0 || h <= 0) continue;
+              let px;
+              try { px = ctx.getImageData(x0, y0, w, h).data; } catch { continue; }
+              let r = 0, g = 0, b = 0, n = 0;
+              for (let i = 0; i < px.length; i += 4) {
+                const lum = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+                if (lum < 200) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n += 1; }
+              }
+              if (n > 4) {
+                const hex = [r / n, g / n, b / n].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+                if (hex !== "000000") line.color = hex;
+              }
+            }
+          } catch { /* colour sampling is best-effort */ }
+        }
+        const pageBlocks = [];
+        const segs = keepTables ? pdfTableSegments(lines) : [{ type: "lines", lines }];
+        for (const seg of segs) {
+          if (seg.type === "table") { tablesFound += 1; pageBlocks.push({ kind: "table", rows: seg.rows, page: pi + 1, pageNum: p.num, y: seg.lines?.[0]?.y }); continue; }
+          const st = pdfDocumentStructure([seg.lines], { reflow, headings: detect, emphasis, pageWidths: [p.width] });
+          for (const b of st.blocks) pageBlocks.push({ ...b, page: pi + 1, pageNum: p.num });
+        }
+        if (keepImages) {
+          for (const im of p.imageItems.slice(0, 25)) {
+            try {
+              const img = await new Promise((res, rej) => { const t = setTimeout(() => rej(new Error("image timeout")), 5000); p.page.objs.get(im.name, (v) => { clearTimeout(t); res(v); }); });
+              const c2 = document.createElement("canvas");
+              let blob = null;
+              if (img?.data && img.width) {
+                c2.width = img.width; c2.height = img.height;
+                c2.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0);
+                blob = await new Promise((r) => c2.toBlob(r, "image/png"));
+              } else if (typeof ImageBitmap !== "undefined" && img instanceof ImageBitmap) {
+                c2.width = img.width; c2.height = img.height;
+                c2.getContext("2d").drawImage(img, 0, 0);
+                blob = await new Promise((r) => c2.toBlob(r, "image/png"));
+              }
+              if (!blob || blob.size < 200) continue;
+              const pxw = Math.max(40, Math.min(im.w, p.width - 96));
+              const block = { kind: "image", page: pi + 1, pageNum: p.num, y: im.y, data: new Uint8Array(await blob.arrayBuffer()), w: pxw, h: (pxw * im.h) / im.w };
+              let at = pageBlocks.length;
+              for (let k = 0; k < pageBlocks.length; k += 1) if (pageBlocks[k].y != null && pageBlocks[k].y < im.y) { at = k; break; }
+              pageBlocks.splice(at, 0, block);
+              imagesFound += 1;
+            } catch { /* skip unreadable image */ }
+          }
+        }
+        if (keepStyle && headRule !== "off") {
+          for (const b of pageBlocks) {
+            if (b.kind === "p") continue;
+            const hit = (p.rules || []).find((r) => r.y <= b.y && r.y >= b.y - b.size * 1.8 && r.x <= b.left + 40);
             if (hit || headRule === "always") { b.underline = true; b.ruleColor = hit?.color; b.ruleSize = hit?.h; }
           }
         }
+        pdfMatchLink(pageBlocks, p.links);
+        linksFound += pageBlocks.filter((b) => b.link).length;
+        all.push(...pageBlocks);
+        setProgress(25 + Math.round(((pi + 1) / pages.length) * 55));
       }
-      const words = structure.blocks.reduce((n, b) => n + b.text.split(/\s+/).filter(Boolean).length, 0);
-      if (!words) throw new Error("No selectable text found — this PDF is probably scanned images. Convert pages with PDF to JPG, then run them through Image to Text (OCR).");
+      if (worker) await worker.terminate();
 
       const docx = await import("docx");
       const ALIGN = { left: docx.AlignmentType.LEFT, center: docx.AlignmentType.CENTER, right: docx.AlignmentType.RIGHT };
       const children = [];
       let lastPage = 0;
-      for (let bi = 0; bi < structure.blocks.length; bi += 1) {
-        const b = structure.blocks[bi];
-        const next = structure.blocks[bi + 1];
-        if (pageBreaks && lastPage && b.page !== lastPage) children.push(new docx.Paragraph({ children: [new docx.PageBreak()] }));
-        lastPage = b.page;
-        // Vertical rhythm: the gap to the next line becomes paragraph spacing,
-        // so section breaks breathe in Word the way they breathe in the PDF.
-        const gap = next && next.page === b.page ? b.y - next.y - b.size : 0;
+      for (let bi = 0; bi < all.length; bi += 1) {
+        const b = all[bi];
+        const next = all[bi + 1];
+        if (pageBreaks && lastPage && b.pageNum !== lastPage) children.push(new docx.Paragraph({ children: [new docx.PageBreak()] }));
+        lastPage = b.pageNum;
+        if (b.kind === "table") {
+          children.push(new docx.Table({
+            width: { size: 100, type: docx.WidthType.PERCENTAGE },
+            rows: b.rows.map((r) => new docx.TableRow({ children: r.map((c) => new docx.TableCell({ children: [new docx.Paragraph({ children: [new docx.TextRun({ text: c, size: 20 })] })] })) })),
+          }));
+          children.push(new docx.Paragraph({ children: [] }));
+          continue;
+        }
+        if (b.kind === "image") {
+          children.push(new docx.Paragraph({ spacing: { after: 120 }, children: [new docx.ImageRun({ type: "png", data: b.data, transformation: { width: Math.round((b.w * 96) / 72), height: Math.round((b.h * 96) / 72) } })] }));
+          continue;
+        }
+        const gap = next && next.pageNum === b.pageNum && next.y != null && b.y != null ? b.y - next.y - b.size : 0;
         const after = 100 + Math.max(0, Math.min(30, gap)) * 12;
         const runOpts = { text: b.text, bold: b.kind === "p" ? b.bold : true, italics: b.italic };
         if (keepStyle) {
-          runOpts.size = Math.max(8, Math.round(b.size * 2)); // half-points = exact PDF size
+          runOpts.size = Math.max(8, Math.round(b.size * 2));
           runOpts.font = pdfFontFamily(b.family);
           if (b.color) runOpts.color = b.color;
         }
-        const paraOpts = {
-          spacing: { after: Math.round(after) },
-          alignment: ALIGN[b.align] || docx.AlignmentType.LEFT,
-          children: [new docx.TextRun(runOpts)],
-        };
+        const paraOpts = { spacing: { after: Math.round(after) }, alignment: ALIGN[b.align] || docx.AlignmentType.LEFT, children: [] };
         if (b.bullet) paraOpts.bullet = { level: 0 };
-        if (b.underline) {
-          paraOpts.border = {
-            bottom: {
-              color: b.ruleColor || b.color || "000000",
-              space: 2,
-              style: docx.BorderStyle.SINGLE,
-              size: Math.max(4, Math.min(24, Math.round((b.ruleSize || 0.8) * 8))),
-            },
-          };
-        }
+        if (b.underline) paraOpts.border = { bottom: { color: b.ruleColor || b.color || "000000", space: 2, style: docx.BorderStyle.SINGLE, size: Math.max(4, Math.min(24, Math.round((b.ruleSize || 0.8) * 8))) } };
         if (b.kind === "h1") paraOpts.heading = docx.HeadingLevel.HEADING_1;
         else if (b.kind === "h2") paraOpts.heading = docx.HeadingLevel.HEADING_2;
+        paraOpts.children = b.link
+          ? [new docx.ExternalHyperlink({ link: b.link, children: [new docx.TextRun({ ...runOpts, style: "Hyperlink" })] })]
+          : [new docx.TextRun(runOpts)];
         children.push(new docx.Paragraph(paraOpts));
       }
-      const blob = await docx.Packer.toBlob(new docx.Document({ sections: [{ children }] }));
+      const first = pages[0];
+      const section = {
+        properties: {
+          size: { width: Math.round(first.width * 20), height: Math.round(first.height * 20) },
+          margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 },
+        },
+        children,
+      };
+      if (hf.header.length) section.headers = { default: new docx.Header({ children: hf.header.map((t) => new docx.Paragraph({ children: [new docx.TextRun({ text: t, size: 18, color: "666666" })] })) }) };
+      if (hf.footer.length) section.footers = { default: new docx.Footer({ children: hf.footer.map((t) => new docx.Paragraph({ children: [new docx.TextRun({ text: t, size: 18, color: "666666" })] })) }) };
+      const blob = await docx.Packer.toBlob(new docx.Document({ sections: [section] }));
+      if (tablesFound) warnings.push(`${tablesFound} table${tablesFound === 1 ? "" : "s"} rebuilt as editable Word tables — cell grids are approximated from column gaps.`);
+      if (imagesFound) warnings.push(`${imagesFound} image${imagesFound === 1 ? "" : "s"} embedded at ${keepStyle ? "their" : "flow"} position${imagesFound === 1 ? "" : "s"}.`);
+      if (linksFound) warnings.push(`${linksFound} hyperlink${linksFound === 1 ? "" : "s"} preserved as clickable links.`);
+      if (hf.header.length || hf.footer.length) warnings.push("Repeating edge lines moved into the Word header/footer.");
       setProgress(100);
       setResult({
         blob,
-        url: URL.createObjectURL(blob),
         stats: {
-          pages: item.pages,
-          paragraphs: structure.blocks.filter((b) => b.kind === "p").length,
-          headings: structure.blocks.filter((b) => b.kind !== "p").length,
-          words,
+          pages: pages.length,
+          headings: all.filter((b) => b.kind === "h1" || b.kind === "h2").length,
+          paragraphs: all.filter((b) => b.kind === "p").length,
+          tables: tablesFound,
+          images: imagesFound,
+          links: linksFound,
+          words: all.reduce((n, b) => n + (b.text ? b.text.split(/\s+/).filter(Boolean).length : 0), 0),
           size: blob.size,
         },
+        preview: all.filter((b) => b.kind !== "image").slice(0, 60),
+        warnings,
       });
+      setStage("done");
     } catch (e) {
       setError(friendlyError(e, "Conversion failed. The PDF may use an unusual internal format."));
-      setProgress(null);
-    } finally {
-      setBusy(false);
+      setStage("ready"); setProgress(null);
     }
   };
 
+  const busyAny = stage === "analyzing" || stage === "converting" || stage === "ocr";
+  const step = result ? 3 : analysis ? 2 : item ? 1 : 0;
+  const steps = ["Upload", "Analyze", "Convert", "Download"];
+
   return (
     <div>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {steps.map((label, i) => (
+          <span key={label} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold ${i === step ? "bg-sky-400 text-[#03212b]" : i < step ? "bg-sky-400/15 text-sky-300" : "bg-white/[0.04] text-slate-500"}`}>
+            <span className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] ${i === step ? "bg-[#03212b]/20" : i < step ? "bg-sky-400/20" : "bg-white/[0.06]"}`}>{i + 1}</span>
+            {label}
+          </span>
+        ))}
+        <span className="ml-auto text-[11px] font-semibold text-slate-500">100% on-device · max 40 MB</span>
+      </div>
       {!item && (
-        <Dropzone accept="application/pdf,.pdf" onFiles={add} title="Drop a PDF — get an editable Word .docx" hint="Reports, assignments, contracts, letters — any digital PDF" icon="file" />
+        <Dropzone accept="application/pdf,.pdf" onFiles={add} title="Drop a PDF — get an editable Word .docx" hint="Reports, CVs, statements, scans — up to 40 MB, never uploaded" icon="file" />
       )}
       <Alert msg={error} />
       {item && (
@@ -1004,79 +1267,112 @@ export function PdfToWord() {
           <div>
             <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
               <div className="flex items-center gap-3">
-                <Icon name="file" size={26} className="text-amber-300" />
+                <Icon name="file" size={26} className="text-sky-300" />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-white">{item.file.name}</p>
                   <p className="text-xs text-slate-400">{formatBytes(item.file.size)} · {item.pages} page{item.pages === 1 ? "" : "s"}</p>
                 </div>
               </div>
-              <div className="mt-4 space-y-2.5">
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  <input type="checkbox" checked={detect} onChange={(e) => setDetect(e.target.checked)} disabled={busy} className="h-4 w-4" />
-                  Detect headings & bold (recommended)
-                </label>
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  <input type="checkbox" checked={keepStyle} onChange={(e) => setKeepStyle(e.target.checked)} disabled={busy} className="h-4 w-4" />
-                  Keep PDF colours, exact sizes & fonts
-                </label>
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  <span className="shrink-0">Heading underlines</span>
-                  <select value={headRule} onChange={(e) => setHeadRule(e.target.value)} disabled={busy || !keepStyle} className="ml-auto w-auto rounded-lg border border-white/10 bg-[#12152e] px-2 py-1 text-xs text-white outline-none focus:border-amber-400/60 disabled:opacity-50">
-                    <option value="auto">Auto — from the PDF's own rules</option>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="text-sm font-semibold text-white">Pages to convert</label>
+                  <input value={range} onChange={(e) => setRange(e.target.value)} placeholder={`all (e.g. 1-3, 7)`} disabled={busyAny} className={inputCls} />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-white">Heading underlines</label>
+                  <select value={headRule} onChange={(e) => setHeadRule(e.target.value)} disabled={busyAny || !keepStyle} className={selectCls}>
+                    <option value="auto">Auto — from the PDF's rules</option>
                     <option value="always">Always underline headings</option>
                     <option value="off">No underlines</option>
                   </select>
-                </label>
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  <input type="checkbox" checked={reflow} onChange={(e) => setReflow(e.target.checked)} disabled={busy} className="h-4 w-4" />
-                  Reflow wrapped lines into paragraphs
-                </label>
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                  <input type="checkbox" checked={pageBreaks} onChange={(e) => setPageBreaks(e.target.checked)} disabled={busy} className="h-4 w-4" />
-                  Page break between PDF pages
-                </label>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {[
+                  ["Detect headings & bold", detect, setDetect],
+                  ["Keep colours, sizes & fonts", keepStyle, setKeepStyle],
+                  ["OCR scanned pages", ocrScanned, setOcrScanned],
+                  ["Rebuild tables", keepTables, setKeepTables],
+                  ["Embed images", keepImages, setKeepImages],
+                  ["Reflow wrapped lines", reflow, setReflow],
+                  ["Page break per PDF page", pageBreaks, setPageBreaks],
+                ].map(([label, val, set]) => (
+                  <label key={label} className="flex items-center gap-2 text-[13px] font-semibold text-slate-200">
+                    <input type="checkbox" checked={val} onChange={(e) => set(e.target.checked)} disabled={busyAny} className="h-4 w-4" />
+                    {label}
+                  </label>
+                ))}
               </div>
               <div className="mt-4 flex flex-wrap gap-2.5">
-                <button onClick={run} disabled={busy} className={btnGreen}><Icon name="download" size={16} /> {busy ? "Converting…" : "Convert to Word"}</button>
-                <button onClick={reset} disabled={busy} className={btnGhost}><Icon name="trash" size={15} /> New file</button>
+                {!analysis && <button onClick={analyze} disabled={busyAny} className={btnGreen}><Icon name="search" size={16} /> {stage === "analyzing" ? "Analyzing…" : "Analyze document"}</button>}
+                {analysis && !result && <button onClick={convert} disabled={busyAny} className={btnGreen}><Icon name="download" size={16} /> {stage === "converting" || stage === "ocr" ? "Converting…" : "Convert to Word"}</button>}
+                {analysis && result && <button onClick={() => { setResult(null); setStage("ready"); }} disabled={busyAny} className={btnGreen}><Icon name="refresh" size={16} /> Re-convert</button>}
+                <button onClick={reset} disabled={busyAny} className={btnGhost}><Icon name="trash" size={15} /> New file</button>
               </div>
-              {busy && progress != null && (
+              {(busyAny) && progress != null && (
                 <div className="mt-4" role="status">
-                  <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${progress}%` }} /></div>
-                  <p className="mt-2 text-xs text-slate-400">{progress < 60 ? `Reading page structure… ${progress}%` : "Building the Word document…"}</p>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-sky-400 transition-all" style={{ width: `${progress}%` }} /></div>
+                  <p className="mt-2 text-xs text-slate-400">{stage === "analyzing" ? "Reading pages, columns, tables, images…" : stage === "ocr" ? "OCR on scanned pages…" : "Rebuilding the document…"}</p>
                 </div>
               )}
-              <p className="mt-3 text-xs leading-relaxed text-slate-500">
-                Everything runs in your browser: the PDF never leaves this device. Headings become real Word
-                heading styles while keeping their PDF size and colour, bold faces are recognised even when the
-                PDF hides them behind font names, centred and right-aligned lines keep their alignment, and the
-                vertical rhythm of the page becomes paragraph spacing — so the Word file looks like the PDF.
-                Symbol-font bullet glyphs (the ones Word shows as "?") become real Word bullets, and rules drawn
-                under headings in the PDF become heading bottom borders — or switch Heading underlines to
-                "Always" for a classic underlined-CV look. Scanned (photo-only) PDFs carry no text to convert —
-                use OCR for those.
-              </p>
             </div>
+            {analysis && (
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Document analysis</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {analysis.pages.map((p) => (
+                    <span key={p.num} className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${p.kind === "scanned" ? "bg-amber-400/15 text-amber-300" : p.kind === "complex" ? "bg-fuchsia-400/15 text-fuchsia-300" : "bg-emerald-400/15 text-emerald-300"}`}>
+                      P{p.num} · {p.kind}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                  {analysis.pages.filter((p) => p.kind === "scanned").length} scanned · {analysis.pages.filter((p) => p.kind === "complex").length} multi-column ·{" "}
+                  {analysis.pages.reduce((n, p) => n + p.imageItems.length, 0)} images · {analysis.pages.reduce((n, p) => n + p.links.length, 0)} links ·{" "}
+                  header/footer {analysis.hf.header.length || analysis.hf.footer.length ? "detected" : "none"}
+                </p>
+              </div>
+            )}
           </div>
           <div>
             {result ? (
               <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06] p-5">
                 <p className="text-sm font-extrabold text-emerald-200">Your Word document is ready</p>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300 sm:grid-cols-4">
+                <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-300 sm:grid-cols-4">
                   <span>{result.stats.pages} pages</span>
                   <span>{result.stats.headings} headings</span>
-                  <span>{result.stats.paragraphs} paragraphs</span>
+                  <span>{result.stats.paragraphs} paras</span>
                   <span>{result.stats.words} words</span>
+                  <span>{result.stats.tables} tables</span>
+                  <span>{result.stats.images} images</span>
+                  <span>{result.stats.links} links</span>
+                  <span>{formatBytes(result.stats.size)}</span>
                 </div>
                 <button onClick={() => downloadBlob(result.blob, `${stripExt(item.file.name)}.docx`)} className={`${btnGreen} mt-4`}>
-                  <Icon name="download" size={16} /> Download .docx ({formatBytes(result.stats.size)})
+                  <Icon name="download" size={16} /> Download .docx
                 </button>
-                <p className="mt-3 text-xs text-slate-400">Opens in Microsoft Word, Google Docs and LibreOffice. Proofread names, numbers and tables before sharing.</p>
+                {result.warnings.length > 0 && (
+                  <ul className="mt-3 space-y-1 text-[11px] leading-relaxed text-amber-200/90">
+                    {result.warnings.map((w) => <li key={w}>• {w}</li>)}
+                  </ul>
+                )}
+                <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-white p-4">
+                  {result.preview.map((b, i) => b.kind === "table" ? (
+                    <table key={i} className="mb-2 w-full border-collapse text-[10px] text-slate-700">
+                      <tbody>{b.rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} className="border border-slate-300 px-1.5 py-0.5">{c}</td>)}</tr>)}</tbody>
+                    </table>
+                  ) : (
+                    <p key={i} style={{ fontSize: `${Math.min(22, Math.max(9, b.size || 11))}px`, color: b.color ? `#${b.color}` : "#1f2937", fontWeight: b.bold || b.kind !== "p" ? 700 : 400, fontStyle: b.italic ? "italic" : "normal", textAlign: b.align === "center" ? "center" : b.align === "right" ? "right" : "left", borderBottom: b.underline ? "1px solid #94a3b8" : "none", marginBottom: 4 }}>
+                      {b.bullet ? "• " : ""}{b.text}
+                    </p>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">Structure preview (first 60 blocks). Opens in Word, Google Docs and LibreOffice — proofread names, numbers and tables.</p>
               </div>
             ) : (
-              <div className="flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 p-6 text-center">
+              <div className="flex h-full min-h-[220px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 p-6 text-center">
                 <Icon name="file" size={30} className="text-slate-600" />
-                <p className="mt-3 text-sm text-slate-500">Structure preview counts (pages, headings, paragraphs, words) will appear here after conversion.</p>
+                <p className="mt-3 text-sm text-slate-500">{analysis ? "Settings look good — hit Convert to Word and the preview plus download appear here." : "Add a PDF and analyze it: pages are classified (text / scanned / multi-column), tables, images, links and headers are detected before anything is converted."}</p>
               </div>
             )}
           </div>

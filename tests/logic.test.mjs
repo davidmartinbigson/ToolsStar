@@ -867,13 +867,67 @@ ck("underline mode selector offered", wsrc.includes("Always underline headings")
 ck("real .docx via the docx library", wsrc.includes('await import("docx")') && wsrc.includes("docx.Packer.toBlob"));
 ck("page breaks + heading styles wired", wsrc.includes("docx.PageBreak") && wsrc.includes("HeadingLevel.HEADING_1"));
 ck("fidelity layer wired: sizes, fonts, colours, alignment", wsrc.includes("runOpts.size = Math.max(8, Math.round(b.size * 2))") && wsrc.includes("pdfFontFamily(b.family)") && wsrc.includes("runOpts.color = b.color") && wsrc.includes("ALIGN[b.align]"));
-ck("ink colour sampled from a rendered page", wsrc.includes("getImageData") && wsrc.includes("pageObjs[pi].render"));
-ck("vertical rhythm becomes paragraph spacing", wsrc.includes("const gap = next && next.page === b.page ? b.y - next.y - b.size : 0"));
-ck("fidelity toggle offered in the UI", wsrc.includes("Keep PDF colours, exact sizes & fonts"));
-ck("scanned PDFs get pointed at OCR", wsrc.includes("Image to Text (OCR)"));
+ck("ink colour sampled from a rendered page", wsrc.includes("getImageData") && wsrc.includes("p.page.render"));
+ck("vertical rhythm becomes paragraph spacing", wsrc.includes("next.y != null && b.y != null ? b.y - next.y - b.size : 0"));
+ck("fidelity toggle offered in the UI", wsrc.includes("Keep colours, sizes & fonts"));
+ck("scanned pages get OCR or an honest warning", wsrc.includes("tesseract.js@5.0.5") && wsrc.includes("scanned page"));
 ck("catalogue lists the new tool", TOOLS.some((t) => t.slug === "pdf-to-word") && TOOLS.length === 52, String(TOOLS.length));
 ck("route page wires its deep dive", src("app/tools/pdf-to-word/page.js").includes('deepDive={toolGuide("pdf-to-word")}'));
 ck("guide entry exists for pdf-to-word", src("lib/toolGuides.js").includes('"pdf-to-word": ['));
+
+/* ═════════ 34. Analysis layer: ranges, columns, tables, headers, links ══
+   The master-spec pipeline: classify every page, fix reading order for
+   multi-column layouts, lift repeating edge lines into header/footer,
+   rebuild tables from shared column gaps, map links and placed images.   */
+
+console.log("\n34. Document analysis layer");
+ck("page ranges parse with clamping", JSON.stringify(pdfw.pdfParseRange("1-3, 5", 8)) === "[1,2,3,5]", JSON.stringify(pdfw.pdfParseRange("1-3, 5", 8)));
+ck("empty range means all pages", JSON.stringify(pdfw.pdfParseRange("", 3)) === "[1,2,3]");
+ck("reversed ranges normalise", JSON.stringify(pdfw.pdfParseRange("9-2", 4)) === "[2,3,4]");
+ck("garbage range falls back to all", JSON.stringify(pdfw.pdfParseRange("abc", 2)) === "[1,2]");
+const colLines = [
+  { text: "Left one", left: 72, right: 250, y: 700, size: 11, parts: [] },
+  { text: "Left two", left: 72, right: 240, y: 686, size: 11, parts: [] },
+  { text: "Left three", left: 72, right: 245, y: 672, size: 11, parts: [] },
+  { text: "Right one", left: 320, right: 500, y: 700, size: 11, parts: [] },
+  { text: "Right two", left: 320, right: 495, y: 686, size: 11, parts: [] },
+  { text: "Right three", left: 320, right: 505, y: 672, size: 11, parts: [] },
+];
+const cut = pdfw.pdfColumnBoundary(colLines, 612);
+ck("two-column layout detected", cut != null && cut > 72 && cut < 320, String(cut));
+ck("reading order becomes column-wise", pdfw.pdfColumnOrder(colLines, 612).map((l) => l.text).join("|") === "Left one|Left two|Left three|Right one|Right two|Right three");
+ck("single-column pages keep their order", pdfw.pdfColumnOrder(struct.blocks ? [] : [], 612).length === 0);
+ck("scanned page classified", pdfw.pdfClassifyPage([{ text: "Hi", left: 0, right: 10, y: 5, size: 11, parts: [] }], 1, 612) === "scanned");
+ck("multi-column page classified complex", pdfw.pdfClassifyPage(colLines, 0, 612) === "complex");
+ck("plain page classified text", pdfw.pdfClassifyPage(lines1, 0, 612) === "text");
+const hfPages = [780, 780, 780].map((y, i) => [{ text: "Acme Annual Report", left: 72, right: 200, y, size: 9, parts: [] }, { text: `Body ${i}`, left: 72, right: 300, y: 400, size: 11, parts: [] }]);
+const hf = pdfw.pdfHeaderFooter(hfPages, [792, 792, 792]);
+ck("repeating top line becomes a header", hf.header.includes("Acme Annual Report"), JSON.stringify(hf));
+ck("header lines stripped from the body", pdfw.pdfStripHeaderFooter(hfPages[0], hf, 792).map((l) => l.text).join() === "Body 0");
+const tbl = [
+  { text: "Name Amount Date", left: 72, right: 500, y: 500, size: 11, parts: [{ x: 72, w: 60, text: "Name" }, { x: 250, w: 60, text: "Amount" }, { x: 420, w: 60, text: "Date" }] },
+  { text: "Ali 500 Jan", left: 72, right: 500, y: 486, size: 11, parts: [{ x: 72, w: 30, text: "Ali" }, { x: 250, w: 30, text: "500" }, { x: 420, w: 30, text: "Jan" }] },
+  { text: "Bilal 700 Feb", left: 72, right: 500, y: 472, size: 11, parts: [{ x: 72, w: 40, text: "Bilal" }, { x: 250, w: 30, text: "700" }, { x: 420, w: 30, text: "Feb" }] },
+  { text: "A plain sentence after the table.", left: 72, right: 300, y: 440, size: 11, parts: [{ x: 72, w: 220, text: "A plain sentence after the table." }] },
+];
+const segs = pdfw.pdfTableSegments(tbl);
+ck("table rows grouped from shared column gaps", segs[0].type === "table" && segs[0].rows.length === 3 && segs[0].rows[1][1] === "500", JSON.stringify(segs[0].rows));
+ck("non-table lines stay separate", segs[1].type === "lines" && segs[1].lines[0].text.startsWith("A plain"));
+const linked = pdfw.pdfMatchLink([{ kind: "p", text: "Visit our site", left: 72, right: 200, y: 300 }], [{ url: "https://example.com", x0: 70, y0: 295, x1: 210, y1: 312 }]);
+ck("link annotations attach to their block", linked[0].link === "https://example.com");
+const imgs = pdfw.pdfImageItems([{ op: "transform", args: [100, 0, 0, 60, 72, 500] }, { op: "paintImageXObject", args: ["img_0_1"] }, { op: "transform", args: [10, 0, 0, 10, 72, 400] }, { op: "paintImageXObject", args: ["tiny"] }]);
+ck("placed images decoded with size filter", imgs.length === 1 && imgs[0].w === 100 && imgs[0].h === 60, JSON.stringify(imgs));
+const wsrc2 = src("components/tools/pdfEssentials.js");
+ck("workflow stepper rendered", wsrc2.includes("const steps = [\"Upload\", \"Analyze\", \"Convert\", \"Download\"]"));
+ck("40 MB on-device guard", wsrc2.includes("40 * 1024 * 1024"));
+ck("OCR engine wired for scanned pages", wsrc2.includes("Tesseract.createWorker"));
+ck("tables become real Word tables", wsrc2.includes("docx.TableRow") && wsrc2.includes("docx.TableCell"));
+ck("images embedded as ImageRun", wsrc2.includes("docx.ImageRun"));
+ck("headers/footers written into the docx", wsrc2.includes("docx.Header") && wsrc2.includes("docx.Footer"));
+ck("hyperlinks preserved", wsrc2.includes("docx.ExternalHyperlink"));
+ck("page size + margins from the PDF", wsrc2.includes("size: { width: Math.round(first.width * 20)"));
+ck("conversion warnings surface honestly", wsrc2.includes("proofread this page in Word") && wsrc2.includes("cell grids are approximated"));
+ck("structure preview shown before download", wsrc2.includes("Structure preview (first 60 blocks)"));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

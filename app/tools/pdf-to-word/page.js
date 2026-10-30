@@ -24,7 +24,9 @@ export default function Page() {
       features={[
         "Real .docx output (not a renamed text file) via the open OOXML format",
         "Heading styles rebuilt from font sizes — H1 and H2, not just big bold text",
-        "Bold and italic character formatting carried across from the PDF fonts",
+        "Bold and italic character formatting carried across — even when the PDF hides bold behind a font name",
+        "Exact PDF type sizes and ink colours sampled from the rendered page, so the Word file looks like the PDF",
+        "Centred and right-aligned lines keep their alignment; vertical rhythm becomes paragraph spacing",
         "Optional page breaks so each PDF page starts a fresh Word page",
         "Line reflow: wrapped PDF lines merge back into proper paragraphs",
         "Live counts of pages, headings, paragraphs and words before you download",

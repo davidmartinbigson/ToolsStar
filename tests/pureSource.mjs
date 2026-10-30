@@ -110,7 +110,7 @@ export async function ocrPure() {
 export async function pdfWordPure() {
   const rel = "components/tools/pdfEssentials.js";
   const code = slice(rel, "function pdfJoinParts(parts) {", "export function PdfToWord() {");
-  return importSource(code, ["pdfStyledLines", "pdfDocumentStructure"]);
+  return importSource(code, ["pdfStyledLines", "pdfDocumentStructure", "pdfEmphasisFonts", "pdfAlignment", "pdfFontFamily"]);
 }
 
 export async function utils() {

@@ -808,37 +808,55 @@ ck("nums mode sets a digit whitelist for the engine", numsSrc.includes('tessedit
 
 console.log("\n33. PDF to Word structure");
 const pdfw = await pdfWordPure();
-const styles = { "F-Bold": { fontWeight: 700 }, "F-It": { fontStyle: "italic" }, "F-Regular": {} };
+const styles = { "F-BoldW": { fontWeight: 700 }, "F-It": { fontStyle: "italic" }, "F-Regular": {}, "F-Head": {}, "F-Bold2": {} };
+const F = (str, x, y, size, w, fontName = "F-Regular") => ({ str, transform: [1, 0, 0, size, x, y], width: w, fontName });
 const page1 = [
-  { str: "Annual Report", transform: [1, 0, 0, 18, 72, 700], fontName: "F-Bold" },
-  { str: "The quick brown", transform: [1, 0, 0, 11, 72, 660], fontName: "F-Regular" },
-  { str: "fox jumps", transform: [1, 0, 0, 11, 200, 660], fontName: "F-Regular" },
-  { str: "over the lazy dog.", transform: [1, 0, 0, 11, 72, 646], fontName: "F-Regular" },
-  { str: "Source: internal notes", transform: [1, 0, 0, 11, 72, 600], fontName: "F-It" },
+  F("Annual Report", 72, 700, 18, 180, "F-Head"),
+  F("The quick brown", 72, 660, 11, 230), F("fox jumps far", 310, 660, 11, 215),
+  F("over the lazy dog.", 72, 646, 11, 140),
+  F("Standalone bullet one", 90, 610, 11, 200, "F-It"),
+  F("continuation line", 108, 596, 11, 120),
+  F("Coordinator, Banking Group", 72, 560, 10, 200, "F-Bold2"),
 ];
 const page2 = [
-  { str: "Section Two", transform: [1, 0, 0, 14, 72, 700], fontName: "F-Regular" },
-  { str: "Second page body.", transform: [1, 0, 0, 11, 72, 660], fontName: "F-Regular" },
+  F("Section Two", 72, 700, 14, 110),
+  F("Second page body.", 72, 660, 11, 150),
 ];
 const lines1 = pdfw.pdfStyledLines(page1, styles);
-ck("baseline fragments join into one line", lines1.some((l) => l.text === "The quick brown fox jumps"), JSON.stringify(lines1.map((l) => l.text)));
-ck("bold read from font weight", lines1[0].bold === true);
-ck("italic read from font style table", lines1.some((l) => l.italic && l.text === "Source: internal notes"));
+ck("baseline fragments join into one line", lines1.some((l) => l.text === "The quick brown fox jumps far"), JSON.stringify(lines1.map((l) => l.text)));
+ck("lines carry left/right edges for layout maths", lines1[0].left === 72 && lines1[0].right === 252, JSON.stringify([lines1[0].left, lines1[0].right]));
+ck("bold read from font weight when the table has it", pdfw.pdfStyledLines([F("Heavy", 72, 10, 11, 40, "F-BoldW")], styles)[0].bold === true);
+ck("italic read from font style table", lines1.some((l) => l.italic && l.text === "Standalone bullet one"));
 ck("lines sorted top-down", lines1[0].text === "Annual Report");
-const struct = pdfw.pdfDocumentStructure([lines1, pdfw.pdfStyledLines(page2, styles)], {});
+const lines2 = pdfw.pdfStyledLines(page2, styles);
+const emph = pdfw.pdfEmphasisFonts([...lines1, ...lines2]);
+ck("minority fonts are learned as emphasis faces", emph.has("F-Bold2") && emph.has("F-Head") && !emph.has("F-Regular"), [...emph].join(","));
+const struct = pdfw.pdfDocumentStructure([lines1, lines2], { emphasis: emph });
 ck("body size is the median line size", struct.bodySize === 11, String(struct.bodySize));
 ck("title-scale line becomes H1", struct.blocks[0].kind === "h1" && struct.blocks[0].text === "Annual Report" && struct.blocks[0].page === 1, JSON.stringify(struct.blocks[0]));
-ck("wrapped lines reflow into one paragraph", struct.blocks[1].kind === "p" && struct.blocks[1].text.includes("fox jumps over the lazy dog."), JSON.stringify(struct.blocks[1].text));
-ck("italic flag survives into the paragraph", struct.blocks[1].italic === true);
-ck("section-scale line becomes H2 on page 2", struct.blocks[2].kind === "h2" && struct.blocks[2].page === 2, JSON.stringify(struct.blocks[2]));
-ck("blocks carry their source page", struct.blocks[3].page === 2 && struct.blocks.length === 4, String(struct.blocks.length));
-const noReflow = pdfw.pdfDocumentStructure([lines1, pdfw.pdfStyledLines(page2, styles)], { reflow: false });
-ck("reflow off keeps every line break", noReflow.blocks.length === 6, String(noReflow.blocks.length));
-const noHeads = pdfw.pdfDocumentStructure([lines1, pdfw.pdfStyledLines(page2, styles)], { headings: false });
+ck("margin-filled lines reflow into one paragraph", struct.blocks[1].kind === "p" && struct.blocks[1].text === "The quick brown fox jumps far over the lazy dog.", JSON.stringify(struct.blocks[1].text));
+ck("short lines stay separate (bullets, titles, dates)", struct.blocks[2].text === "Standalone bullet one" && struct.blocks[3].text === "continuation line", JSON.stringify(struct.blocks.slice(2, 4).map((b) => b.text)));
+ck("minority-font emphasis reads as bold in the block", struct.blocks[4].bold === true && struct.blocks[4].kind === "p", JSON.stringify(struct.blocks[4]));
+ck("italic flag survives into its paragraph", struct.blocks[2].italic === true);
+ck("section-scale line becomes H2 on page 2", struct.blocks[5].kind === "h2" && struct.blocks[5].page === 2, JSON.stringify(struct.blocks[5]));
+ck("blocks carry their source page", struct.blocks[6].page === 2 && struct.blocks.length === 7, String(struct.blocks.length));
+ck("exact sizes travel with every block", struct.blocks[0].size === 18 && struct.blocks[4].size === 10, `${struct.blocks[0].size}/${struct.blocks[4].size}`);
+ck("alignment is computed per line", struct.blocks[0].align === "left" && pdfw.pdfAlignment({ left: 246, right: 366 }, 612) === "center" && pdfw.pdfAlignment({ left: 400, right: 560 }, 612) === "right");
+ck("margin-filling lines are never misread as centred", pdfw.pdfAlignment({ left: 72, right: 527 }, 612) === "left");
+const coloured = pdfw.pdfDocumentStructure([lines1.map((l) => ({ ...l, color: l.kind === undefined && l.text === "Annual Report" ? "1f4e79" : l.color })) , lines2], { emphasis: emph });
+ck("sampled ink colour travels into the block", coloured.blocks[0].color === "1f4e79", String(coloured.blocks[0].color));
+const noReflow = pdfw.pdfDocumentStructure([lines1, lines2], { reflow: false, emphasis: emph });
+ck("reflow off keeps every line break", noReflow.blocks.length === 8, String(noReflow.blocks.length));
+const noHeads = pdfw.pdfDocumentStructure([lines1, lines2], { headings: false, emphasis: emph });
 ck("heading detection can be switched off", noHeads.blocks.every((b) => b.kind === "p"), String(noHeads.blocks.filter((b) => b.kind !== "p").length));
+ck("generic font families map to Word faces", pdfw.pdfFontFamily("sans-serif") === "Calibri" && pdfw.pdfFontFamily("Times, serif") === "Times New Roman" && pdfw.pdfFontFamily("monospace") === "Consolas");
 const wsrc = src("components/tools/pdfEssentials.js");
 ck("real .docx via the docx library", wsrc.includes('await import("docx")') && wsrc.includes("docx.Packer.toBlob"));
 ck("page breaks + heading styles wired", wsrc.includes("docx.PageBreak") && wsrc.includes("HeadingLevel.HEADING_1"));
+ck("fidelity layer wired: sizes, fonts, colours, alignment", wsrc.includes("runOpts.size = Math.max(8, Math.round(b.size * 2))") && wsrc.includes("pdfFontFamily(b.family)") && wsrc.includes("runOpts.color = b.color") && wsrc.includes("ALIGN[b.align]"));
+ck("ink colour sampled from a rendered page", wsrc.includes("getImageData") && wsrc.includes("pageObjs[pi].render"));
+ck("vertical rhythm becomes paragraph spacing", wsrc.includes("const gap = next && next.page === b.page ? b.y - next.y - b.size : 0"));
+ck("fidelity toggle offered in the UI", wsrc.includes("Keep PDF colours, exact sizes & fonts"));
 ck("scanned PDFs get pointed at OCR", wsrc.includes("Image to Text (OCR)"));
 ck("catalogue lists the new tool", TOOLS.some((t) => t.slug === "pdf-to-word") && TOOLS.length === 52, String(TOOLS.length));
 ck("route page wires its deep dive", src("app/tools/pdf-to-word/page.js").includes('deepDive={toolGuide("pdf-to-word")}'));

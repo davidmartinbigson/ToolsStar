@@ -8,7 +8,7 @@
 // covered — they need a real browser.
 
 import { existsSync, readFileSync } from "node:fs";
-import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, enhancePure, alphaPure, compressLadder, ocrPure, src } from "./pureSource.mjs";
+import { calcPure, signPdfGeometry, wordCounter, utils, pngLogic, enhancePure, alphaPure, compressLadder, ocrPure, pdfWordPure, src } from "./pureSource.mjs";
 
 let pass = 0;
 const fails = [];
@@ -798,6 +798,51 @@ const numsSrc = src("components/tools/quickTools.js");
 ck("handwriting scan type offered", numsSrc.includes("Handwriting / numbers (CNIC, forms)"));
 ck("area-select controls wired", numsSrc.includes("Read only the selected area") && numsSrc.includes("Clear selection") && numsSrc.includes("drag on the scan to skip signatures"));
 ck("nums mode sets a digit whitelist for the engine", numsSrc.includes('tessedit_char_whitelist: "0123456789-/. "'));
+
+/* ═════════ 33. PDF to Word — structure reconstruction ═════════════════
+   A PDF stores positioned fragments, not paragraphs. The converter rebuilds
+   lines from baselines, style flags from fonts, the body size from the
+   median, headings from size ratios, and paragraphs by reflowing wrapped
+   lines — then hands those blocks to the docx library. Pinned on a
+   synthetic two-page document.                                          */
+
+console.log("\n33. PDF to Word structure");
+const pdfw = await pdfWordPure();
+const styles = { "F-Bold": { fontWeight: 700 }, "F-It": { fontStyle: "italic" }, "F-Regular": {} };
+const page1 = [
+  { str: "Annual Report", transform: [1, 0, 0, 18, 72, 700], fontName: "F-Bold" },
+  { str: "The quick brown", transform: [1, 0, 0, 11, 72, 660], fontName: "F-Regular" },
+  { str: "fox jumps", transform: [1, 0, 0, 11, 200, 660], fontName: "F-Regular" },
+  { str: "over the lazy dog.", transform: [1, 0, 0, 11, 72, 646], fontName: "F-Regular" },
+  { str: "Source: internal notes", transform: [1, 0, 0, 11, 72, 600], fontName: "F-It" },
+];
+const page2 = [
+  { str: "Section Two", transform: [1, 0, 0, 14, 72, 700], fontName: "F-Regular" },
+  { str: "Second page body.", transform: [1, 0, 0, 11, 72, 660], fontName: "F-Regular" },
+];
+const lines1 = pdfw.pdfStyledLines(page1, styles);
+ck("baseline fragments join into one line", lines1.some((l) => l.text === "The quick brown fox jumps"), JSON.stringify(lines1.map((l) => l.text)));
+ck("bold read from font weight", lines1[0].bold === true);
+ck("italic read from font style table", lines1.some((l) => l.italic && l.text === "Source: internal notes"));
+ck("lines sorted top-down", lines1[0].text === "Annual Report");
+const struct = pdfw.pdfDocumentStructure([lines1, pdfw.pdfStyledLines(page2, styles)], {});
+ck("body size is the median line size", struct.bodySize === 11, String(struct.bodySize));
+ck("title-scale line becomes H1", struct.blocks[0].kind === "h1" && struct.blocks[0].text === "Annual Report" && struct.blocks[0].page === 1, JSON.stringify(struct.blocks[0]));
+ck("wrapped lines reflow into one paragraph", struct.blocks[1].kind === "p" && struct.blocks[1].text.includes("fox jumps over the lazy dog."), JSON.stringify(struct.blocks[1].text));
+ck("italic flag survives into the paragraph", struct.blocks[1].italic === true);
+ck("section-scale line becomes H2 on page 2", struct.blocks[2].kind === "h2" && struct.blocks[2].page === 2, JSON.stringify(struct.blocks[2]));
+ck("blocks carry their source page", struct.blocks[3].page === 2 && struct.blocks.length === 4, String(struct.blocks.length));
+const noReflow = pdfw.pdfDocumentStructure([lines1, pdfw.pdfStyledLines(page2, styles)], { reflow: false });
+ck("reflow off keeps every line break", noReflow.blocks.length === 6, String(noReflow.blocks.length));
+const noHeads = pdfw.pdfDocumentStructure([lines1, pdfw.pdfStyledLines(page2, styles)], { headings: false });
+ck("heading detection can be switched off", noHeads.blocks.every((b) => b.kind === "p"), String(noHeads.blocks.filter((b) => b.kind !== "p").length));
+const wsrc = src("components/tools/pdfEssentials.js");
+ck("real .docx via the docx library", wsrc.includes('await import("docx")') && wsrc.includes("docx.Packer.toBlob"));
+ck("page breaks + heading styles wired", wsrc.includes("docx.PageBreak") && wsrc.includes("HeadingLevel.HEADING_1"));
+ck("scanned PDFs get pointed at OCR", wsrc.includes("Image to Text (OCR)"));
+ck("catalogue lists the new tool", TOOLS.some((t) => t.slug === "pdf-to-word") && TOOLS.length === 52, String(TOOLS.length));
+ck("route page wires its deep dive", src("app/tools/pdf-to-word/page.js").includes('deepDive={toolGuide("pdf-to-word")}'));
+ck("guide entry exists for pdf-to-word", src("lib/toolGuides.js").includes('"pdf-to-word": ['));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

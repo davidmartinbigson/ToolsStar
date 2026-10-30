@@ -2,7 +2,6 @@ import "./globals.css";
 import Script from "next/script";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import TranslatePill from "@/components/TranslatePill";
 import Analytics from "@/components/Analytics";
 import CookieConsent from "@/components/CookieConsent";
 import {
@@ -149,7 +148,6 @@ export default function RootLayout({ children }) {
         <Footer />
         <Analytics />
         <CookieConsent />
-        <TranslatePill />
       </body>
     </html>
   );

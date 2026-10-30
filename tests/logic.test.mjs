@@ -500,6 +500,9 @@ for (const slug of guided) {
 ck("toolGuide resolves every catalogue slug", guided.every((s) => toolGuide(s) === TOOL_GUIDES[s]));
 ck("toolGuide is null-safe for unknown slugs", toolGuide("no-such-tool") === null);
 ck("ToolShell renders the deepDive prop", src("components/ToolShell.js").includes("deepDive?.length > 0"));
+const tshell = src("components/ToolShell.js");
+ck("tool pages emit rich-result JSON-LD (search stars/FAQ/breadcrumbs)", ["SoftwareApplication", "HowTo", "FAQPage", "BreadcrumbList"].every((t) => tshell.includes(`"@type": "${t}"`)));
+ck("schema stays policy-safe: no fabricated ratings or reviews", !tshell.includes("aggregateRating") && !tshell.includes("\"@type\": \"Review\""));
 
 // Regression floor: no tool page may slide back to interface-only copy.
 // (296 was the thinnest page the day this floor was written — video-to-mp3.)

@@ -654,3 +654,234 @@ export function PdfToText() {
     </div>
   );
 }
+
+/* ═══════════════════════════ PDF TO WORD ═══════════════════════════
+   Pure structure builders (no DOM — pinned by tests). pdf.js hands us
+   every text fragment with its position, font size and font name; from
+   that we rebuild what a Word document actually needs: lines (fragments
+   on the same baseline), style flags (bold/italic from the font), a
+   body-text size (the median), headings (lines clearly larger than the
+   body that are short and unpunctuated), and paragraphs (consecutive
+   body lines reflowed together). The component then feeds these blocks
+   to the `docx` library to emit a real .docx.                        */
+function pdfJoinParts(parts) {
+  let line = "";
+  for (const part of [...parts].sort((a, b) => a.x - b.x)) {
+    const value = String(part.text || "");
+    if (!value) continue;
+    if (!line) line = value.trimStart();
+    else if (/\s$/.test(line) || /^\s/.test(value) || /^[,.;:!?)%\]}]/.test(value) || /[([{]$/.test(line)) line += value;
+    else line += ` ${value}`;
+  }
+  return line.trim();
+}
+
+function pdfStyledLines(items, styles) {
+  const lines = [];
+  for (const item of items || []) {
+    const str = String(item?.str ?? "");
+    if (!str.length) continue;
+    const x = Number(item.transform?.[4] || 0);
+    const y = Number(item.transform?.[5] || 0);
+    const size = Math.abs(Number(item.transform?.[3] || item.height || 10)) || 10;
+    const font = String(item.fontName || "");
+    const st = (styles || {})[font] || {};
+    const bold = /bold|black|heavy/i.test(font) || Number(st.fontWeight) >= 600;
+    const italic = /italic|oblique/i.test(font) || st.fontStyle === "italic";
+    let line = lines.find((c) => Math.abs(c.y - y) <= Math.max(2, size * 0.45));
+    if (!line) {
+      line = { y, size, bold, italic, parts: [] };
+      lines.push(line);
+    }
+    line.parts.push({ x, text: str });
+    line.size = Math.max(line.size, size);
+    line.bold = line.bold || bold;
+    line.italic = line.italic || italic;
+  }
+  return lines
+    .sort((a, b) => b.y - a.y)
+    .map((l) => ({ text: pdfJoinParts(l.parts), size: l.size, bold: l.bold, italic: l.italic, y: l.y }))
+    .filter((l) => l.text.trim());
+}
+
+function pdfDocumentStructure(pages, opts = {}) {
+  const { reflow = true, headings = true } = opts;
+  const all = (pages || []).flat();
+  const sizes = all.map((l) => Math.round(l.size * 10) / 10).sort((a, b) => a - b);
+  const bodySize = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 11;
+  const blocks = [];
+  (pages || []).forEach((lines, pi) => {
+    let para = null;
+    const flush = () => { if (para) { blocks.push(para); para = null; } };
+    for (const line of lines) {
+      const ratio = bodySize ? line.size / bodySize : 1;
+      const trimmed = line.text.trim();
+      const isHeading = headings && ratio >= 1.18 && trimmed.length <= 90 && !/[.;,]$/.test(trimmed);
+      if (isHeading) {
+        flush();
+        blocks.push({ page: pi + 1, kind: ratio >= 1.45 ? "h1" : "h2", text: trimmed, bold: line.bold, italic: line.italic });
+      } else if (reflow && para && para.page === pi + 1 && Math.abs(line.size - para.size) <= bodySize * 0.12) {
+        para.text += ` ${trimmed}`;
+        para.bold = para.bold || line.bold;
+        para.italic = para.italic || line.italic;
+      } else {
+        flush();
+        para = { page: pi + 1, kind: "p", text: trimmed, size: line.size, bold: line.bold, italic: line.italic };
+      }
+    }
+    flush();
+  });
+  return { bodySize, blocks };
+}
+
+export function PdfToWord() {
+  const [item, setItem] = useState(null);
+  const [detect, setDetect] = useState(true);
+  const [pageBreaks, setPageBreaks] = useState(true);
+  const [reflow, setReflow] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const pdfRef = useRef(null);
+
+  const add = useCallback(async (files) => {
+    const file = files?.[0];
+    if (!file) return;
+    setError(""); setResult(null); setProgress(null);
+    try {
+      const lib = await pdfjs();
+      const data = new Uint8Array(await file.arrayBuffer());
+      pdfRef.current = await lib.getDocument({ data }).promise;
+      setItem({ file, pages: pdfRef.current.numPages });
+    } catch (e) {
+      setItem(null); pdfRef.current = null;
+      setError(friendlyError(e, "Could not open that PDF. If it is password-protected, unlock it first."));
+    }
+  }, []);
+
+  const reset = () => { setItem(null); setResult(null); setProgress(null); setError(""); pdfRef.current = null; };
+
+  const run = async () => {
+    if (!item || !pdfRef.current) return;
+    setBusy(true); setError(""); setResult(null); setProgress(1);
+    try {
+      const pageLines = [];
+      for (let pageNumber = 1; pageNumber <= item.pages; pageNumber += 1) {
+        const page = await pdfRef.current.getPage(pageNumber);
+        const content = await page.getTextContent();
+        pageLines.push(pdfStyledLines(content.items || [], content.styles || {}));
+        setProgress(Math.round((pageNumber / item.pages) * 60));
+        if (pageNumber % 4 === 0) await new Promise((r) => setTimeout(r, 0));
+      }
+      const structure = pdfDocumentStructure(pageLines, { reflow, headings: detect });
+      const words = structure.blocks.reduce((n, b) => n + b.text.split(/\s+/).filter(Boolean).length, 0);
+      if (!words) throw new Error("No selectable text found — this PDF is probably scanned images. Convert pages with PDF to JPG, then run them through Image to Text (OCR).");
+
+      const docx = await import("docx");
+      const children = [];
+      let lastPage = 0;
+      for (const b of structure.blocks) {
+        if (pageBreaks && lastPage && b.page !== lastPage) children.push(new docx.Paragraph({ children: [new docx.PageBreak()] }));
+        lastPage = b.page;
+        const run = new docx.TextRun({ text: b.text, bold: b.kind === "p" ? b.bold : true, italics: b.italic });
+        if (b.kind === "h1") children.push(new docx.Paragraph({ heading: docx.HeadingLevel.HEADING_1, children: [run] }));
+        else if (b.kind === "h2") children.push(new docx.Paragraph({ heading: docx.HeadingLevel.HEADING_2, children: [run] }));
+        else children.push(new docx.Paragraph({ spacing: { after: 120 }, children: [run] }));
+      }
+      const blob = await docx.Packer.toBlob(new docx.Document({ sections: [{ children }] }));
+      setProgress(100);
+      setResult({
+        blob,
+        url: URL.createObjectURL(blob),
+        stats: {
+          pages: item.pages,
+          paragraphs: structure.blocks.filter((b) => b.kind === "p").length,
+          headings: structure.blocks.filter((b) => b.kind !== "p").length,
+          words,
+          size: blob.size,
+        },
+      });
+    } catch (e) {
+      setError(friendlyError(e, "Conversion failed. The PDF may use an unusual internal format."));
+      setProgress(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      {!item && (
+        <Dropzone accept="application/pdf,.pdf" onFiles={add} title="Drop a PDF — get an editable Word .docx" hint="Reports, assignments, contracts, letters — any digital PDF" icon="file" />
+      )}
+      <Alert msg={error} />
+      {item && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <div className="flex items-center gap-3">
+                <Icon name="file" size={26} className="text-amber-300" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold text-white">{item.file.name}</p>
+                  <p className="text-xs text-slate-400">{formatBytes(item.file.size)} · {item.pages} page{item.pages === 1 ? "" : "s"}</p>
+                </div>
+              </div>
+              <div className="mt-4 space-y-2.5">
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <input type="checkbox" checked={detect} onChange={(e) => setDetect(e.target.checked)} disabled={busy} className="h-4 w-4" />
+                  Detect headings & bold (recommended)
+                </label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <input type="checkbox" checked={reflow} onChange={(e) => setReflow(e.target.checked)} disabled={busy} className="h-4 w-4" />
+                  Reflow wrapped lines into paragraphs
+                </label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <input type="checkbox" checked={pageBreaks} onChange={(e) => setPageBreaks(e.target.checked)} disabled={busy} className="h-4 w-4" />
+                  Page break between PDF pages
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2.5">
+                <button onClick={run} disabled={busy} className={btnGreen}><Icon name="download" size={16} /> {busy ? "Converting…" : "Convert to Word"}</button>
+                <button onClick={reset} disabled={busy} className={btnGhost}><Icon name="trash" size={15} /> New file</button>
+              </div>
+              {busy && progress != null && (
+                <div className="mt-4" role="status">
+                  <div className="h-2.5 overflow-hidden rounded-full bg-white/[0.08]"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${progress}%` }} /></div>
+                  <p className="mt-2 text-xs text-slate-400">{progress < 60 ? `Reading page structure… ${progress}%` : "Building the Word document…"}</p>
+                </div>
+              )}
+              <p className="mt-3 text-xs leading-relaxed text-slate-500">
+                Everything runs in your browser: the PDF never leaves this device. Headings become real Word
+                heading styles, bold and italic survive as character formatting, and each PDF page can start a
+                fresh Word page. Scanned (photo-only) PDFs carry no text to convert — use OCR for those.
+              </p>
+            </div>
+          </div>
+          <div>
+            {result ? (
+              <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.06] p-5">
+                <p className="text-sm font-extrabold text-emerald-200">Your Word document is ready</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300 sm:grid-cols-4">
+                  <span>{result.stats.pages} pages</span>
+                  <span>{result.stats.headings} headings</span>
+                  <span>{result.stats.paragraphs} paragraphs</span>
+                  <span>{result.stats.words} words</span>
+                </div>
+                <button onClick={() => downloadBlob(result.blob, `${stripExt(item.file.name)}.docx`)} className={`${btnGreen} mt-4`}>
+                  <Icon name="download" size={16} /> Download .docx ({formatBytes(result.stats.size)})
+                </button>
+                <p className="mt-3 text-xs text-slate-400">Opens in Microsoft Word, Google Docs and LibreOffice. Proofread names, numbers and tables before sharing.</p>
+              </div>
+            ) : (
+              <div className="flex h-full min-h-[180px] flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 p-6 text-center">
+                <Icon name="file" size={30} className="text-slate-600" />
+                <p className="mt-3 text-sm text-slate-500">Structure preview counts (pages, headings, paragraphs, words) will appear here after conversion.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

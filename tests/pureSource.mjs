@@ -107,6 +107,12 @@ export async function ocrPure() {
   return importSource(code, ["ocrHistogram", "otsuThreshold", "ocrPreprocessPixels", "ocrCleanText", "ocrFixDigits", "ocrRotateRect", "ocrRectPsm"]);
 }
 
+export async function pdfWordPure() {
+  const rel = "components/tools/pdfEssentials.js";
+  const code = slice(rel, "function pdfJoinParts(parts) {", "export function PdfToWord() {");
+  return importSource(code, ["pdfStyledLines", "pdfDocumentStructure"]);
+}
+
 export async function utils() {
   // lib/utils.js is already plain ESM with no imports (browser APIs are only
   // touched inside function bodies), so it can be imported as-is.

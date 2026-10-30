@@ -799,6 +799,27 @@ ck("handwriting scan type offered", numsSrc.includes("Handwriting / numbers (CNI
 ck("area-select controls wired", numsSrc.includes("Read only the selected area") && numsSrc.includes("Clear selection") && numsSrc.includes("drag on the scan to skip signatures"));
 ck("nums mode sets a digit whitelist for the engine", numsSrc.includes('tessedit_char_whitelist: "0123456789-/. "'));
 
+/* ═════════ 32. Translate pill — global readers, zero AdSense risk ══════
+   Google's in-page Website Translator widget is unsupported (ended Oct 1,
+   2026) and rewrote the DOM in place, breaking React apps; machine-
+   translated copies indexed on our domain would also flirt with Google's
+   scaled-content spam policy. The pill therefore opens Google Translate in
+   a new tab: pure URL builder + language list, pinned here.               */
+
+console.log("\n32. Translate pill");
+import { TRANSLATE_LANGS, googleTranslateUrl } from "../lib/site.js";
+ck("language list covers the big readerships", TRANSLATE_LANGS.length >= 10 && TRANSLATE_LANGS.some((l) => l.code === "ur") && TRANSLATE_LANGS.some((l) => l.code === "ar") && TRANSLATE_LANGS.some((l) => l.code === "zh-CN"), String(TRANSLATE_LANGS.length));
+ck("every entry has a code and a human label", TRANSLATE_LANGS.every((l) => l.code && l.label));
+const tUrl = googleTranslateUrl("https://toolsstars.com/tools/image-to-text", "ur");
+ck("translate URL points at Google with the page encoded", tUrl === "https://translate.google.com/translate?sl=auto&tl=ur&u=https%3A%2F%2Ftoolsstars.com%2Ftools%2Fimage-to-text", tUrl);
+ck("language codes are encoded too", googleTranslateUrl("https://toolsstars.com/", "zh-CN").includes("tl=zh-CN"));
+ck("no third-party translate script loads on our pages", !src("app/layout.js").includes("translate_a/element.js") && !src("app/layout.js").includes("google.translate"));
+const lay = src("app/layout.js");
+ck("pill is mounted site-wide in the root layout", lay.includes("<TranslatePill />"));
+const pill = src("components/TranslatePill.js");
+ck("pill sits bottom-left and opens a new tab", pill.includes("fixed bottom-4 left-4") && pill.includes('"_blank", "noopener"'));
+ck("pill copy promises the site stays untouched", pill.includes("this site stays exactly as it is"));
+
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 
 const total = pass + fails.length;

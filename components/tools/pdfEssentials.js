@@ -690,43 +690,91 @@ function pdfStyledLines(items, styles) {
     const italic = /italic|oblique/i.test(font) || st.fontStyle === "italic";
     let line = lines.find((c) => Math.abs(c.y - y) <= Math.max(2, size * 0.45));
     if (!line) {
-      line = { y, size, bold, italic, parts: [] };
+      line = { y, size, bold, italic, parts: [], fonts: [], family: "" };
       lines.push(line);
     }
-    line.parts.push({ x, text: str });
+    const w = Number(item.width || 0);
+    line.parts.push({ x, text: str, w });
+    line.left = line.left === undefined ? x : Math.min(line.left, x);
+    line.right = Math.max(line.right || 0, x + w);
+    if (!line.fonts.includes(font)) line.fonts.push(font);
+    const fam = String(st.fontFamily || "");
+    if (fam && !line.family) line.family = fam;
     line.size = Math.max(line.size, size);
     line.bold = line.bold || bold;
     line.italic = line.italic || italic;
   }
   return lines
     .sort((a, b) => b.y - a.y)
-    .map((l) => ({ text: pdfJoinParts(l.parts), size: l.size, bold: l.bold, italic: l.italic, y: l.y }))
+    .map((l) => ({
+      text: pdfJoinParts(l.parts), size: l.size, bold: l.bold, italic: l.italic, y: l.y,
+      left: l.left ?? 0, right: l.right ?? 0, fonts: l.fonts, family: l.family,
+    }))
     .filter((l) => l.text.trim());
 }
 
+/* Visual-fidelity helpers (pure — pinned by tests). Real PDFs hide emphasis:
+   the font table often carries no weight at all, and the bold face shows up
+   only as a separate font name used on a minority of lines (names, section
+   heads, job titles). So a font that appears on few lines is an emphasis
+   font, and short lines set in it are bold. Alignment comes from where the
+   line sits on the page, and generic font families map to Word equivalents. */
+function pdfEmphasisFonts(lines) {
+  const perFont = new Map();
+  for (const l of lines || []) for (const f of l.fonts || []) perFont.set(f, (perFont.get(f) || 0) + 1);
+  const total = (lines || []).length || 1;
+  const out = new Set();
+  for (const [f, n] of perFont) if (n <= Math.max(2, total * 0.25)) out.add(f);
+  return out;
+}
+
+function pdfAlignment(line, pageWidth) {
+  const pw = pageWidth || 612;
+  const center = (line.left + line.right) / 2;
+  // A margin-filling line centres itself by accident — only short lines may
+  // be read as deliberately centred.
+  if (line.right - line.left < pw * 0.7 && Math.abs(center - pw / 2) <= pw * 0.05) return "center";
+  if (line.right >= pw * 0.9 && line.left > pw * 0.5) return "right";
+  return "left";
+}
+
+function pdfFontFamily(family) {
+  const f = String(family || "").toLowerCase();
+  if (/mono|courier/.test(f)) return "Consolas";
+  if (/serif/.test(f) && !/sans/.test(f)) return "Times New Roman";
+  return "Calibri";
+}
+
 function pdfDocumentStructure(pages, opts = {}) {
-  const { reflow = true, headings = true } = opts;
+  const { reflow = true, headings = true, emphasis = null, pageWidths = null } = opts;
   const all = (pages || []).flat();
   const sizes = all.map((l) => Math.round(l.size * 10) / 10).sort((a, b) => a - b);
   const bodySize = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 11;
   const blocks = [];
   (pages || []).forEach((lines, pi) => {
+    const pw = (pageWidths || [])[pi] || 612;
     let para = null;
-    const flush = () => { if (para) { blocks.push(para); para = null; } };
+    let paraFilled = false;
+    const flush = () => { if (para) { blocks.push(para); para = null; paraFilled = false; } };
     for (const line of lines) {
       const ratio = bodySize ? line.size / bodySize : 1;
       const trimmed = line.text.trim();
+      const emph = line.bold || ((line.fonts || []).some((f) => emphasis?.has(f)) && trimmed.length <= 80);
       const isHeading = headings && ratio >= 1.18 && trimmed.length <= 90 && !/[.;,]$/.test(trimmed);
       if (isHeading) {
         flush();
-        blocks.push({ page: pi + 1, kind: ratio >= 1.45 ? "h1" : "h2", text: trimmed, bold: line.bold, italic: line.italic });
-      } else if (reflow && para && para.page === pi + 1 && Math.abs(line.size - para.size) <= bodySize * 0.12) {
+        blocks.push({ page: pi + 1, kind: ratio >= 1.45 ? "h1" : "h2", text: trimmed, bold: true, italic: line.italic, size: line.size, color: line.color, align: pdfAlignment(line, pw), family: line.family, y: line.y });
+      } else if (reflow && para && para.page === pi + 1 && paraFilled && Math.abs(line.size - para.size) <= bodySize * 0.12) {
+        // Only a line whose predecessor ran out to the margin was wrapped by
+        // the typesetter; short lines (bullets, titles, dates) stay their own.
         para.text += ` ${trimmed}`;
-        para.bold = para.bold || line.bold;
+        para.bold = para.bold || emph;
         para.italic = para.italic || line.italic;
+        paraFilled = line.right >= pw * 0.82;
       } else {
         flush();
-        para = { page: pi + 1, kind: "p", text: trimmed, size: line.size, bold: line.bold, italic: line.italic };
+        para = { page: pi + 1, kind: "p", text: trimmed, size: line.size, bold: emph, italic: line.italic, color: line.color, align: pdfAlignment(line, pw), family: line.family, y: line.y };
+        paraFilled = line.right >= pw * 0.82;
       }
     }
     flush();
@@ -737,6 +785,7 @@ function pdfDocumentStructure(pages, opts = {}) {
 export function PdfToWord() {
   const [item, setItem] = useState(null);
   const [detect, setDetect] = useState(true);
+  const [keepStyle, setKeepStyle] = useState(true);
   const [pageBreaks, setPageBreaks] = useState(true);
   const [reflow, setReflow] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -767,27 +816,90 @@ export function PdfToWord() {
     setBusy(true); setError(""); setResult(null); setProgress(1);
     try {
       const pageLines = [];
+      const pageWidths = [];
+      const pageHeights = [];
+      const pageObjs = [];
       for (let pageNumber = 1; pageNumber <= item.pages; pageNumber += 1) {
         const page = await pdfRef.current.getPage(pageNumber);
+        const vp = page.getViewport({ scale: 1 });
+        pageWidths.push(vp.width);
+        pageHeights.push(vp.height);
+        pageObjs.push(page);
         const content = await page.getTextContent();
         pageLines.push(pdfStyledLines(content.items || [], content.styles || {}));
-        setProgress(Math.round((pageNumber / item.pages) * 60));
+        setProgress(Math.round((pageNumber / item.pages) * 40));
         if (pageNumber % 4 === 0) await new Promise((r) => setTimeout(r, 0));
       }
-      const structure = pdfDocumentStructure(pageLines, { reflow, headings: detect });
+      // Real PDFs hide emphasis: bold often shows up only as a minority font
+      // name with no weight in the font table, so learn those fonts first.
+      const emphasis = detect ? pdfEmphasisFonts(pageLines.flat()) : null;
+      // Visual fidelity: sample each line's ink colour from a rendered page
+      // (capped at 20 pages so huge documents stay fast).
+      if (keepStyle && item.pages <= 20) {
+        for (let pi = 0; pi < pageObjs.length; pi += 1) {
+          const lines = pageLines[pi];
+          if (!lines.length) continue;
+          const scale = 1.5;
+          const rvp = pageObjs[pi].getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(rvp.width);
+          canvas.height = Math.ceil(rvp.height);
+          try {
+            await pageObjs[pi].render({ canvasContext: canvas.getContext("2d"), viewport: rvp }).promise;
+          } catch { continue; }
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          for (const line of lines) {
+            const x0 = Math.max(0, Math.floor(line.left * scale));
+            const y0 = Math.max(0, Math.floor((pageHeights[pi] - line.y - line.size * 0.2) * scale));
+            const w = Math.min(canvas.width - x0, Math.max(2, Math.ceil((line.right - line.left) * scale)));
+            const h = Math.min(canvas.height - y0, Math.max(2, Math.ceil(line.size * 1.3 * scale)));
+            if (w <= 0 || h <= 0) continue;
+            let px;
+            try { px = ctx.getImageData(x0, y0, w, h).data; } catch { continue; }
+            let r = 0, g = 0, b = 0, n = 0;
+            for (let i = 0; i < px.length; i += 4) {
+              const lum = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+              if (lum < 200) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n += 1; }
+            }
+            if (n > 4) {
+              const hex = [r / n, g / n, b / n].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+              if (hex !== "000000") line.color = hex;
+            }
+          }
+          setProgress(40 + Math.round(((pi + 1) / pageObjs.length) * 20));
+        }
+      }
+      const structure = pdfDocumentStructure(pageLines, { reflow, headings: detect, emphasis, pageWidths });
       const words = structure.blocks.reduce((n, b) => n + b.text.split(/\s+/).filter(Boolean).length, 0);
       if (!words) throw new Error("No selectable text found — this PDF is probably scanned images. Convert pages with PDF to JPG, then run them through Image to Text (OCR).");
 
       const docx = await import("docx");
+      const ALIGN = { left: docx.AlignmentType.LEFT, center: docx.AlignmentType.CENTER, right: docx.AlignmentType.RIGHT };
       const children = [];
       let lastPage = 0;
-      for (const b of structure.blocks) {
+      for (let bi = 0; bi < structure.blocks.length; bi += 1) {
+        const b = structure.blocks[bi];
+        const next = structure.blocks[bi + 1];
         if (pageBreaks && lastPage && b.page !== lastPage) children.push(new docx.Paragraph({ children: [new docx.PageBreak()] }));
         lastPage = b.page;
-        const run = new docx.TextRun({ text: b.text, bold: b.kind === "p" ? b.bold : true, italics: b.italic });
-        if (b.kind === "h1") children.push(new docx.Paragraph({ heading: docx.HeadingLevel.HEADING_1, children: [run] }));
-        else if (b.kind === "h2") children.push(new docx.Paragraph({ heading: docx.HeadingLevel.HEADING_2, children: [run] }));
-        else children.push(new docx.Paragraph({ spacing: { after: 120 }, children: [run] }));
+        // Vertical rhythm: the gap to the next line becomes paragraph spacing,
+        // so section breaks breathe in Word the way they breathe in the PDF.
+        const gap = next && next.page === b.page ? b.y - next.y - b.size : 0;
+        const after = 100 + Math.max(0, Math.min(30, gap)) * 12;
+        const runOpts = { text: b.text, bold: b.kind === "p" ? b.bold : true, italics: b.italic };
+        if (keepStyle) {
+          runOpts.size = Math.max(8, Math.round(b.size * 2)); // half-points = exact PDF size
+          runOpts.font = pdfFontFamily(b.family);
+          if (b.color) runOpts.color = b.color;
+        }
+        const paraOpts = {
+          spacing: { after: Math.round(after) },
+          alignment: ALIGN[b.align] || docx.AlignmentType.LEFT,
+          children: [new docx.TextRun(runOpts)],
+        };
+        if (b.kind === "h1") paraOpts.heading = docx.HeadingLevel.HEADING_1;
+        else if (b.kind === "h2") paraOpts.heading = docx.HeadingLevel.HEADING_2;
+        children.push(new docx.Paragraph(paraOpts));
       }
       const blob = await docx.Packer.toBlob(new docx.Document({ sections: [{ children }] }));
       setProgress(100);
@@ -833,6 +945,10 @@ export function PdfToWord() {
                   Detect headings & bold (recommended)
                 </label>
                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+                  <input type="checkbox" checked={keepStyle} onChange={(e) => setKeepStyle(e.target.checked)} disabled={busy} className="h-4 w-4" />
+                  Keep PDF colours, exact sizes & fonts
+                </label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
                   <input type="checkbox" checked={reflow} onChange={(e) => setReflow(e.target.checked)} disabled={busy} className="h-4 w-4" />
                   Reflow wrapped lines into paragraphs
                 </label>
@@ -853,8 +969,10 @@ export function PdfToWord() {
               )}
               <p className="mt-3 text-xs leading-relaxed text-slate-500">
                 Everything runs in your browser: the PDF never leaves this device. Headings become real Word
-                heading styles, bold and italic survive as character formatting, and each PDF page can start a
-                fresh Word page. Scanned (photo-only) PDFs carry no text to convert — use OCR for those.
+                heading styles while keeping their PDF size and colour, bold faces are recognised even when the
+                PDF hides them behind font names, centred and right-aligned lines keep their alignment, and the
+                vertical rhythm of the page becomes paragraph spacing — so the Word file looks like the PDF.
+                Scanned (photo-only) PDFs carry no text to convert — use OCR for those.
               </p>
             </div>
           </div>

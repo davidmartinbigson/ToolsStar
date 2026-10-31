@@ -667,11 +667,13 @@ ck("matte cleanup panel is wired in the UI", src("components/tools/BackgroundRem
 console.log("\n28. Guided-filter edge matting");
 ck("matting runs automatically on every run", src("components/tools/BackgroundRemover.js").includes("raw.matted = guidedAlpha(raw.data, raw.data, raw.width, raw.height)"));
 ck("sliders re-run on the matted matte", src("components/tools/BackgroundRemover.js").includes("refineAlpha(raw.matted || raw.data"));
-ck("memory-friendly best-quality tier is the default", src("components/tools/BackgroundRemover.js").includes('const [model, setModel] = useState("medium")'));
-ck("three honest model tiers", src("components/tools/BackgroundRemover.js").includes("Hair/fur-grade edges, memory-friendly — recommended") && src("components/tools/BackgroundRemover.js").includes("fp32 detail for desktops with RAM to spare"));
+ck("memory-friendly best-quality tier is the default", src("components/tools/BackgroundRemover.js").includes('const [model, setModel] = useState("pro")'));
+ck("three honest model tiers", src("components/tools/BackgroundRemover.js").includes("people, hair, props & products — recommended") && src("components/tools/BackgroundRemover.js").includes("fp32 detail for desktops with RAM to spare"));
 const bgSrc = src("components/tools/BackgroundRemover.js");
-ck("a failing tier auto-falls back down the chain", bgSrc.includes('const tiers = model === "large" ? ["large", "medium", "small"]') && bgSrc.includes("if (!blob) throw lastErr"));
-ck("the user is told when a fallback produced the cut-out", bgSrc.includes("so the ${usedTier} model produced this cut-out"));
+ck("a failing tier auto-falls back down the chain", bgSrc.includes('pro: ["pro", "medium", "small"]') && bgSrc.includes("if (!blob) throw lastErr"));
+ck("the user is told when a fallback produced the cut-out", bgSrc.includes("model produced this cut-out"));
+ck("Pro tier runs MIT-licensed BiRefNet through transformers.js", bgSrc.includes("onnx-community/BiRefNet_lite-ONNX") && bgSrc.includes("@huggingface/transformers@3"));
+ck("Hugging Face CDN is preconnected for the Pro weights", src("lib/site.js").includes("https://huggingface.co"));
 ck("matte post-processing is guarded (never loses a good cut-out)", bgSrc.includes("matte post-processing skipped:") && bgSrc.includes("setCutout({ blob, url: URL.createObjectURL(blob) });"));
 ck("matting memory guard covers phones (4 MP)", bgSrc.includes("if (n > 4_000_000) return out;"));
 ck("matting window scales with photo resolution", bgSrc.includes("Math.min(w, h) / 250"));

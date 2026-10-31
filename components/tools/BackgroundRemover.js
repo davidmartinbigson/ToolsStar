@@ -132,7 +132,11 @@ function boxMean(arr, w, h, r) {
 }
 
 function guidedAlpha(rgb, alpha, w, h, opts = {}) {
-  const { radius = 4, eps = 0.02 } = opts;
+  // The matting window scales with the photo: a fixed 4px radius leaves
+  // stair-step jaggies on 2000px+ uploads and over-smooths tiny thumbnails.
+  // Clamped so small inputs (and the synthetic tests) keep today's behaviour.
+  const radius = opts.radius ?? Math.min(8, Math.max(4, Math.round(Math.min(w, h) / 250)));
+  const { eps = 0.02 } = opts;
   const n = w * h;
   const out = new Uint8ClampedArray(alpha);
   if (n > 4_000_000) return out; // memory guard: skip matting on giant images
@@ -431,7 +435,7 @@ export default function BackgroundRemover() {
             <h2 className="mt-5 text-sm font-bold uppercase tracking-wider text-slate-300">AI model</h2>
             <div className="mt-2.5 grid grid-cols-3 gap-2">
               {[
-                ["small", "Fast", "Quickest download, fine for simple backgrounds"],
+                ["small", "Fast", "Smallest 8-bit model — drafts & simple backgrounds only"],
                 ["medium", "Best quality ★", "Hair/fur-grade edges, memory-friendly — recommended"],
                 ["large", "Maximum", "fp32 detail for desktops with RAM to spare"],
               ].map(([val, title, desc]) => (
@@ -448,6 +452,13 @@ export default function BackgroundRemover() {
                 </button>
               ))}
             </div>
+            {model === "small" && (
+              <p className="mt-2 rounded-lg border border-amber-300/25 bg-amber-300/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+                Heads-up: Fast runs the smallest quantized model — edges on people, hair or
+                busy scenes can cut wrong. For real results use Best quality ★ (or Maximum
+                on a desktop).
+              </p>
+            )}
 
             <div className="mt-5 flex flex-wrap gap-3">
               <button

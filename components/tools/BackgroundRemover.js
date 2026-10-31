@@ -174,11 +174,62 @@ function guidedAlpha(rgb, alpha, w, h, opts = {}) {
   return out;
 }
 
+/* Pro tier: BiRefNet (MIT-licensed, onnx-community ONNX export) run through
+   transformers.js — a generation ahead of IS-Net on people, hair, props and
+   product shots. Everything still executes inside the visitor's browser;
+   only the weights stream from the Hugging Face CDN (one-time, cached).
+   Any failure throws, and the tier chain below falls back to IS-Net.     */
+async function runBiRefNet(srcUrl, onStage) {
+  let tf;
+  try {
+    tf = await import(/* webpackIgnore: true */ "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/+esm");
+  } catch {
+    tf = await import(/* webpackIgnore: true */ "https://esm.sh/@huggingface/transformers@3");
+  }
+  const { AutoModel, AutoProcessor, RawImage, env } = tf;
+  env.allowLocalModels = false;
+  const id = "onnx-community/BiRefNet_lite-ONNX";
+  const prog = (e) => {
+    if (!onStage) return;
+    if (e && e.status === "progress" && e.total) {
+      onStage(Math.min(80, Math.max(4, Math.round((e.loaded / e.total) * 80))), "downloading");
+    }
+  };
+  onStage && onStage(4, "downloading");
+  let model;
+  try {
+    model = await AutoModel.from_pretrained(id, { dtype: "q8", device: "webgpu", progress_callback: prog });
+  } catch {
+    model = await AutoModel.from_pretrained(id, { dtype: "q8", progress_callback: prog });
+  }
+  const processor = await AutoProcessor.from_pretrained(id, { progress_callback: prog });
+  onStage && onStage(82, "computing");
+  const image = await RawImage.fromURL(srcUrl);
+  const { pixel_values } = await processor(image);
+  const res = await model({ input: pixel_values });
+  const out = res.output ?? res.logits ?? Object.values(res)[0];
+  const scaled = (out[0].mul ? out[0].mul(255) : out[0].mul_(255)).to("uint8");
+  const mask = await RawImage.fromTensor(scaled);
+  const m2 = mask.width === image.width && mask.height === image.height ? mask : await mask.resize(image.width, image.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d");
+  const imgData = ctx.createImageData(image.width, image.height);
+  imgData.data.set(image.data);
+  const md = m2.data;
+  for (let i = 0; i < md.length; i++) imgData.data[i * 4 + 3] = md[i];
+  ctx.putImageData(imgData, 0, 0);
+  return await new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("PNG encode failed"))), "image/png")
+  );
+}
+
 export default function BackgroundRemover() {
   const [file, setFile] = useState(null);
   const [srcUrl, setSrcUrl] = useState("");
   const [dims, setDims] = useState(null);
-  const [model, setModel] = useState("medium");
+  const [model, setModel] = useState("pro");
   const [working, setWorking] = useState(false);
   const [stage, setStage] = useState("");
   const [progress, setProgress] = useState(null);
@@ -237,17 +288,35 @@ export default function BackgroundRemover() {
         mod.default;
       if (typeof removeBackground !== "function") throw new Error("AI engine failed to load.");
 
-      // The fp32 tier can exceed a phone's WASM memory and a blocked CDN can
-      // kill the download, so a failure automatically walks down the tiers
-      // instead of showing the user a dead end.
-      const tiers = model === "large" ? ["large", "medium", "small"] : model === "medium" ? ["medium", "small"] : ["small"];
+      // A blocked CDN or a phone that runs out of WASM memory must never be a
+      // dead end: every tier automatically walks down its fallback chain.
+      const chains = {
+        pro: ["pro", "medium", "small"],
+        large: ["large", "medium", "small"],
+        medium: ["medium", "small"],
+        small: ["small"],
+      };
+      const tierLabel = { pro: "Pro (BiRefNet)", large: "Maximum", medium: "Best quality", small: "Fast" };
+      const tiers = chains[model] || chains.medium;
       let blob = null;
       let usedTier = null;
       let lastErr = null;
       for (const tier of tiers) {
         if (seqRef.current !== seq) return;
         try {
-          if (tiers.indexOf(tier) > 0) setStage(`The ${tiers[0]} model failed on this device — retrying with the ${tier} model…`);
+          if (tiers.indexOf(tier) > 0) setStage(`The ${tierLabel[tiers[0]]} model failed on this device — retrying with ${tierLabel[tier]}…`);
+          if (tier === "pro") {
+            blob = await runBiRefNet(srcUrl, (pct, kind) => {
+              if (seqRef.current !== seq) return;
+              if (kind === "downloading") {
+                setStage("Downloading the Pro BiRefNet engine (one-time, then cached)…");
+                setProgress(pct);
+              } else if (kind === "computing") {
+                setStage("BiRefNet is separating the subject, hair & props…");
+                setProgress(82 + Math.round((pct - 82) * 0.9));
+              }
+            });
+          } else {
           blob = await removeBackground(file, {
             model: tier,
             progress: (key, current, total) => {
@@ -263,6 +332,7 @@ export default function BackgroundRemover() {
               }
             },
           });
+          }
           usedTier = tier;
           break;
         } catch (e) {
@@ -273,7 +343,7 @@ export default function BackgroundRemover() {
       if (!blob) throw lastErr || new Error("AI engine could not run.");
       setTierNote(
         usedTier !== model
-          ? `Heads-up: the ${model} model could not run on this device, so the ${usedTier} model produced this cut-out.`
+          ? `Heads-up: the ${tierLabel[model]} model could not run on this device, so the ${tierLabel[usedTier]} model produced this cut-out.`
           : ""
       );
 
@@ -301,7 +371,7 @@ export default function BackgroundRemover() {
     } catch (e) {
       console.error(e);
       setError(
-        "Background removal failed on every on-device model tier. The usual causes: an ad-blocker or firewall blocking cdn.jsdelivr.net / staticimgly.com (the model download), or a photo too large for this device's memory. Allow those hosts, try a smaller photo, or open the page on a desktop browser."
+        "Background removal failed on every on-device model tier. The usual causes: an ad-blocker or firewall blocking cdn.jsdelivr.net / staticimgly.com / huggingface.co (the model downloads), or a photo too large for this device's memory. Allow those hosts, try a smaller photo, or open the page on a desktop browser."
       );
       setStage("");
       setProgress(null);
@@ -433,11 +503,12 @@ export default function BackgroundRemover() {
 
             {/* model choice */}
             <h2 className="mt-5 text-sm font-bold uppercase tracking-wider text-slate-300">AI model</h2>
-            <div className="mt-2.5 grid grid-cols-3 gap-2">
+            <div className="mt-2.5 grid grid-cols-2 gap-2 md:grid-cols-4">
               {[
-                ["small", "Fast", "Smallest 8-bit model — drafts & simple backgrounds only"],
-                ["medium", "Best quality ★", "Hair/fur-grade edges, memory-friendly — recommended"],
+                ["pro", "Pro (BiRefNet) ★", "New-gen engine — people, hair, props & products — recommended"],
+                ["medium", "Best quality", "Hair/fur-grade edges, memory-friendly fallback"],
                 ["large", "Maximum", "fp32 detail for desktops with RAM to spare"],
+                ["small", "Fast", "Smallest 8-bit model — drafts & simple backgrounds only"],
               ].map(([val, title, desc]) => (
                 <button
                   key={val}

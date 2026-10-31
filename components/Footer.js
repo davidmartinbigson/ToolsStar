@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Icon, Logo } from "./icons";
 import { TOOLS } from "@/lib/tools";
+import { FACEBOOK_PAGE } from "@/lib/site";
 
 export default function Footer() {
   const year = new Date().getFullYear();
@@ -34,6 +35,15 @@ export default function Footer() {
                 <Icon name="infinity" size={12} className="text-cyan-400" /> Unlimited &amp; free
               </span>
             </div>
+            <a
+              href={FACEBOOK_PAGE}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3.5 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-amber-300/40 hover:text-amber-300"
+            >
+              <Icon name="facebook" size={14} filled strokeWidth={0.75} className="text-amber-300" />
+              Follow us on Facebook
+            </a>
           </div>
 
           <nav aria-label="Image tools">

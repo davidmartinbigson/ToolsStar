@@ -11,6 +11,7 @@ import {
   CDN_ORIGINS,
   ADS_ENABLED,
   ADSENSE_CLIENT,
+  FACEBOOK_PAGE,
 } from "@/lib/site";
 
 export const metadata = {
@@ -110,6 +111,17 @@ const websiteJsonLd = {
   },
 };
 
+// Organization entity with sameAs social profiles — helps search engines and
+// AI answer engines connect the website brand with its official social page.
+const organizationJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: SITE_NAME,
+  url: SITE_URL,
+  logo: `${SITE_URL}/favicon-192.png`,
+  sameAs: [FACEBOOK_PAGE],
+};
+
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
@@ -131,6 +143,10 @@ export default function RootLayout({ children }) {
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }}
         />
         {/* Loaded only once an AdSense client id is configured; individual
             AdSlot components stay inert until the visitor consents. */}

@@ -674,6 +674,8 @@ ck("a failing tier auto-falls back down the chain", bgSrc.includes('const tiers 
 ck("the user is told when a fallback produced the cut-out", bgSrc.includes("so the ${usedTier} model produced this cut-out"));
 ck("matte post-processing is guarded (never loses a good cut-out)", bgSrc.includes("matte post-processing skipped:") && bgSrc.includes("setCutout({ blob, url: URL.createObjectURL(blob) });"));
 ck("matting memory guard covers phones (4 MP)", bgSrc.includes("if (n > 4_000_000) return out;"));
+ck("matting window scales with photo resolution", bgSrc.includes("Math.min(w, h) / 250"));
+ck("Fast tier warns about quantized-model cuts", bgSrc.includes("Smallest 8-bit model") && bgSrc.includes("edges on people, hair or"));
 const gm = (w, h, fn) => { const d = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const [r, g, b, a] = fn(x, y); d[(y * w + x) * 4] = r; d[(y * w + x) * 4 + 1] = g; d[(y * w + x) * 4 + 2] = b; d[(y * w + x) * 4 + 3] = a; } return d; };
 // flat grey photo, noisy mask → matting must smooth the mask
 const flatGuide = gm(32, 32, (x, y) => [120, 120, 120, ((x + y) % 2 ? 235 : 205)]);

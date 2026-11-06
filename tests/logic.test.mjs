@@ -506,6 +506,8 @@ ck("schema stays policy-safe: no fabricated ratings or reviews", !tshell.include
 ck("footer links the official Facebook page", src("components/Footer.js").includes("FACEBOOK_PAGE"));
 ck("Organization schema declares sameAs social profiles", src("app/layout.js").includes("sameAs: [FACEBOOK_PAGE]"));
 ck("www host 301-redirects to the canonical apex domain", src("next.config.mjs").includes("www.toolsstars.com"));
+const laySrc = src("app/layout.js");
+ck("AdSense loader sits inside <head> per the implementation guide", laySrc.indexOf("adsbygoogle") > laySrc.indexOf("<head>") && laySrc.indexOf("adsbygoogle") < laySrc.indexOf("</head>") && (laySrc.match(/adsbygoogle/g) || []).length === 1);
 
 // Regression floor: no tool page may slide back to interface-only copy.
 // (296 was the thinnest page the day this floor was written — video-to-mp3.)

@@ -5,6 +5,18 @@ const nextConfig = {
   compress: true,
   // Static-friendly: every page is SSG by default in the App Router,
   // which is what makes Tools Stars fast and easy for Google to index.
+  // Canonical host: www 301-redirects to the apex domain so SEO signals,
+  // favicons and crawls consolidate on a single origin (Google indexed both).
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "www.toolsstars.com" }],
+        destination: "https://toolsstars.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

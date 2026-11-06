@@ -138,6 +138,17 @@ export default function RootLayout({ children }) {
         {ADS_ENABLED && (
           <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossOrigin="anonymous" />
         )}
+        {/* AdSense implementation guide asks for the loader inside the head
+            element; it stays inert (no ad requests) until consent + a slot id
+            exist, so placing it here changes nothing behaviourally. */}
+        {ADS_ENABLED && (
+          <Script
+            async
+            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
+            crossOrigin="anonymous"
+            strategy="afterInteractive"
+          />
+        )}
       </head>
       <body className="min-h-screen flex flex-col">
         <script
@@ -148,16 +159,6 @@ export default function RootLayout({ children }) {
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }}
         />
-        {/* Loaded only once an AdSense client id is configured; individual
-            AdSlot components stay inert until the visitor consents. */}
-        {ADS_ENABLED && (
-          <Script
-            async
-            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
-            crossOrigin="anonymous"
-            strategy="afterInteractive"
-          />
-        )}
         <Starfield />
         <Header />
         <main className="relative z-10 flex-1 w-full">{children}</main>

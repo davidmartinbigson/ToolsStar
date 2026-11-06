@@ -505,6 +505,7 @@ ck("tool pages emit rich-result JSON-LD (search stars/FAQ/breadcrumbs)", ["Softw
 ck("schema stays policy-safe: no fabricated ratings or reviews", !tshell.includes("aggregateRating") && !tshell.includes("\"@type\": \"Review\""));
 ck("footer links the official Facebook page", src("components/Footer.js").includes("FACEBOOK_PAGE"));
 ck("Organization schema declares sameAs social profiles", src("app/layout.js").includes("sameAs: [FACEBOOK_PAGE]"));
+ck("www host 301-redirects to the canonical apex domain", src("next.config.mjs").includes("www.toolsstars.com"));
 
 // Regression floor: no tool page may slide back to interface-only copy.
 // (296 was the thinnest page the day this floor was written — video-to-mp3.)

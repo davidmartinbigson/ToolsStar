@@ -1,5 +1,4 @@
 import "./globals.css";
-import Script from "next/script";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import Analytics from "@/components/Analytics";
@@ -138,15 +137,18 @@ export default function RootLayout({ children }) {
         {ADS_ENABLED && (
           <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossOrigin="anonymous" />
         )}
-        {/* AdSense implementation guide asks for the loader inside the head
-            element; it stays inert (no ad requests) until consent + a slot id
-            exist, so placing it here changes nothing behaviourally. */}
+        {/* AdSense implementation guide asks for the loader snippet inside the
+            head element. It MUST be a plain script tag: the Next.js Script
+            component with a client-injection strategy only emits a preload
+            link server-side, so a crawler that checks the raw HTML (like the
+            AdSense review) never sees the ad code. A plain tag is
+            server-rendered verbatim. It stays inert (no ad requests) until
+            consent + a slot id exist. */}
         {ADS_ENABLED && (
-          <Script
+          <script
             async
             src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}`}
             crossOrigin="anonymous"
-            strategy="afterInteractive"
           />
         )}
       </head>

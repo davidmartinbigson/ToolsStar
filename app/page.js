@@ -327,6 +327,7 @@ export default function HomePage() {
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-violet-300">{a.category}</span>
               <h3 className="mt-2.5 text-lg font-extrabold leading-snug text-white">{a.title}</h3>
               <p className="mt-2.5 text-sm leading-6 text-slate-400">{a.description}</p>
+              <span className="mt-2 text-xs font-semibold text-slate-500">{a.updated}</span>
               <span className="mt-auto pt-4 text-sm font-bold text-amber-300">Read the guide →</span>
             </Link>
           ))}

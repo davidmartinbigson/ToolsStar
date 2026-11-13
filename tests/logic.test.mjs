@@ -454,6 +454,11 @@ ck("at most one guide per tool (the tool-page rail stays unambiguous)", (() => {
 ck("related reading never includes the article itself", ARTICLES.every((a) => !relatedArticles(a.slug).some((r) => r.slug === a.slug)));
 ck("related reading offers 3", ARTICLES.every((a) => relatedArticles(a.slug).length === 3));
 ck("getArticle resolves every slug", ARTICLES.every((a) => getArticle(a.slug)?.slug === a.slug));
+ck("articles carry a native share row (WhatsApp/Facebook/X/copy — the organic growth lever)", (() => {
+  const shell = readFileSync("components/ArticleShell.js", "utf8");
+  const row = readFileSync("components/ShareRow.js", "utf8");
+  return shell.includes("<ShareRow") && row.includes("wa.me") && row.includes("navigator.clipboard");
+})());
 
 /* ═════════ 21. Tool-page editorial layer — prose ON the tool pages ═════════
    The second half of the "content depth" fix: reviewers sample tool pages,

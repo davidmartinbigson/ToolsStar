@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import ShareRow from "./ShareRow";
 import { SITE_URL, SITE_NAME } from "@/lib/site";
 
 /* ── Rich-text blocks used by the blog content ────────────────────────────────
@@ -248,6 +249,8 @@ export default function ArticleShell({ article, related, tool }) {
               </div>
             </div>
           </div>
+
+          <ShareRow title={article.title} url={url} />
 
           {/* related */}
           {related.length > 0 && (

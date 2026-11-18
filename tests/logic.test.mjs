@@ -454,6 +454,22 @@ ck("at most one guide per tool (the tool-page rail stays unambiguous)", (() => {
 ck("related reading never includes the article itself", ARTICLES.every((a) => !relatedArticles(a.slug).some((r) => r.slug === a.slug)));
 ck("related reading offers 3", ARTICLES.every((a) => relatedArticles(a.slug).length === 3));
 ck("getArticle resolves every slug", ARTICLES.every((a) => getArticle(a.slug)?.slug === a.slug));
+ck("facebook cron queue is sane (unique dates, real copy, internal links, hosted images)", (() => {
+  const q = JSON.parse(readFileSync("content/social-queue.json", "utf8"));
+  const dates = q.map((p) => p.date);
+  return (
+    q.length >= 7 &&
+    new Set(dates).size === dates.length &&
+    q.every((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.date)) &&
+    q.every((p) => p.message.length > 40) &&
+    q.every((p) => (p.link ? p.link.startsWith("https://toolsstars.com") : true)) &&
+    q.every((p) => (p.type === "photo" ? /^https:\/\/toolsstars\.com\/social\//.test(p.image) : true))
+  );
+})());
+ck("facebook publisher cron route posts via the Graph API and is cron-guarded", (() => {
+  const r = readFileSync("app/api/cron/fb-post/route.js", "utf8");
+  return r.includes("graph.facebook.com") && r.includes("CRON_SECRET") && r.includes("FB_PAGE_TOKEN");
+})());
 ck("articles carry a native share row (WhatsApp/Facebook/X/copy — the organic growth lever)", (() => {
   const shell = readFileSync("components/ArticleShell.js", "utf8");
   const row = readFileSync("components/ShareRow.js", "utf8");

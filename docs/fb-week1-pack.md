@@ -1,5 +1,11 @@
 # Facebook Week-1 Daily Pack (17–23 Nov)
 
+> **Status 18 Nov:** Day 1 and Day 3 posts were published manually by the
+> owner and removed from the automation queue. Remaining days shifted to
+> 19–23 Nov; two fresh posts (document-scan guide, application-limits
+> guide) appended for 24–25 Nov. Live source of truth for the cron is
+> `content/social-queue.json` — the copy below is the historical record.
+
 Seven ready-to-schedule posts. Images: use the file named, or for
 link-preview days just paste the URL — Facebook pulls our OG hero
 automatically (self-generated, on-brand).

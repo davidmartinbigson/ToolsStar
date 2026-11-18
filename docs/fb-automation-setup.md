@@ -39,6 +39,16 @@ Then **Deployments → ⋯ → Redeploy (cache untick)** — env is build-time.
   `posted: true` with a postId, or a clear `skipped`/`error` reason.
 - Check the page: the post should be live.
 
+## Troubleshooting: "device you don't usually use" checkpoint
+Meta blocks developer registration from unrecognised devices/locations
+for a cooling-off period. Not a ban; do not retry repeatedly (retries
+extend it). Fix order: turn VPN off; use the device where the Facebook
+app is normally logged in (its browser counts); use Facebook normally
+on that device for 24–72 h so it becomes trusted; keep 2FA on; then try
+once. If it persists beyond a week, complete any identity-confirmation
+prompt Meta offers. Meanwhile the weekly pack can go out via Meta
+Business Suite's own scheduler — no developer app needed for that.
+
 ## Maintenance notes
 - **Weekly:** the agent appends the next 7 dated posts to
   `content/social-queue.json` via PR — no owner action.

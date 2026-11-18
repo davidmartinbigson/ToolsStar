@@ -1,0 +1,46 @@
+[
+  {
+    "date": "2026-11-18",
+    "type": "photo",
+    "image": "https://toolsstars.com/social/fb-tip-pdf-images.jpg",
+    "message": "A 40 MB PDF is almost never 40 MB of words. It's a pile of oversized images wearing a document's clothes. Here's what actually shrinks it — and the one thing compression must never touch:",
+    "link": "https://toolsstars.com/blog/compress-pdf-size"
+  },
+  {
+    "date": "2026-11-19",
+    "type": "link",
+    "message": "Pasted your signature into Word and got a white sticker instead of ink? That's a JPEG problem, not your problem — JPEG cannot store transparency at all. The five-minute fix:",
+    "link": "https://toolsstars.com/blog/transparent-signature-from-photo"
+  },
+  {
+    "date": "2026-11-20",
+    "type": "photo",
+    "image": "https://toolsstars.com/social/fb-privacy-ondevice.jpg",
+    "message": "Every \"free online tool\" that uploads your files is asking you to trust their server with them. Ours never sees your files: compression, conversion, background removal — all of it runs in your browser, on your device. Why we built it that way:",
+    "link": "https://toolsstars.com/"
+  },
+  {
+    "date": "2026-11-21",
+    "type": "link",
+    "message": "Your 3-second GIF is 11 MB because GIF stores every frame as a full 256-colour image — a format designed in 1987. The three dials (fps, crop, palette) that fix it:",
+    "link": "https://toolsstars.com/blog/why-gifs-are-so-large"
+  },
+  {
+    "date": "2026-11-22",
+    "type": "link",
+    "message": "GPA is not the average of your grades — it's the average weighted by credits, and the difference shows up in the first decimal. The 4.0 scale explained with a worked example (students, this one's yours):",
+    "link": "https://toolsstars.com/blog/gpa-4-scale-explained"
+  },
+  {
+    "date": "2026-11-23",
+    "type": "link",
+    "message": "\"Convert video to MP3\" is usually a misnomer — the audio file is already sitting inside the video. When extraction is a lossless copy, and when it quietly costs you a generation of quality:",
+    "link": "https://toolsstars.com/blog/video-to-mp3-demux-vs-transcode"
+  },
+  {
+    "date": "2026-11-24",
+    "type": "link",
+    "message": "Sunday question: what's the most annoying file task you hit every week? Compressing? Converting? Signing? Scanning? Tell us below — the most-answered one gets a proper how-to guide next.",
+    "link": ""
+  }
+]

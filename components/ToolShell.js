@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Icon } from "./icons";
 import ToolCard from "./ToolCard";
 import AdSlot from "./AdSlot";
-import { ARTICLES } from "@/lib/articles";
+import { ARTICLES, guidesForTool } from "@/lib/articles";
 import { relatedTools } from "@/lib/tools";
 import { SITE_URL } from "@/lib/site";
 
@@ -16,6 +16,10 @@ export default function ToolShell({ tool, intro, steps, features, faqs, deepDive
   // and the guide links back. Reviewers (and readers) should never hit a
   // tool page that is interface-only.
   const guide = ARTICLES.find((a) => a.tool === tool.slug);
+  // Guides from the same subject area. Tool pages are the pages search engines
+  // crawl most, so every one of them links into the catalog — a guide never
+  // depends on being found through the sitemap alone.
+  const rail = guidesForTool(tool.slug, 3).filter((a) => a.slug !== (guide && guide.slug));
   const jsonLd = [
     {
       "@context": "https://schema.org",
@@ -202,6 +206,33 @@ export default function ToolShell({ tool, intro, steps, features, faqs, deepDive
           ))}
         </div>
       </section>
+
+      {/* guides from the same subject area */}
+      {rail.length > 0 && (
+        <section className="mt-14" aria-labelledby="rail-h">
+          <div className="flex items-end justify-between gap-4">
+            <h2 id="rail-h" className="text-2xl font-extrabold tracking-tight text-white">Guides that go deeper</h2>
+            <Link href="/blog" className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-violet-300 hover:text-violet-200">
+              All guides <Icon name="arrow" size={15} />
+            </Link>
+          </div>
+          <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {rail.map((a) => (
+              <li key={a.slug}>
+                <Link
+                  href={`/blog/${a.slug}`}
+                  className="flex h-full flex-col rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 transition hover:border-violet-400/40 hover:bg-white/[0.04]"
+                >
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-violet-300">{a.category}</span>
+                  <span className="mt-2 block font-bold leading-snug text-slate-100">{a.title}</span>
+                  <span className="mt-2 line-clamp-2 text-sm leading-6 text-slate-400">{a.description}</span>
+                  <span className="mt-auto pt-4 text-xs font-bold text-slate-500">{a.readingMins} min read · updated {a.updated}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* related */}
       <section className="mt-14" aria-labelledby="rel-h">

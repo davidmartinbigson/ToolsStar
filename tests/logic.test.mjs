@@ -425,7 +425,7 @@ ck("CDN_ORIGINS are all https", site.CDN_ORIGINS.every((o) => o.startsWith("http
    they cover, alt text on every image, and no forbidden geo wording.         */
 
 console.log("\n20. Editorial layer (blog)");
-const { ARTICLES, getArticle, relatedArticles } = await import("../lib/articles.js");
+const { ARTICLES, getArticle, relatedArticles, guidesForTool, isoDate } = await import("../lib/articles.js");
 const { TOOLS } = await import("../lib/tools.js");
 const toolSlugs = new Set(TOOLS.map((t) => t.slug));
 
@@ -962,6 +962,51 @@ ck("hyperlinks preserved", wsrc2.includes("docx.ExternalHyperlink"));
 ck("page size + margins from the PDF", wsrc2.includes("size: { width: Math.round(first.width * 20)"));
 ck("conversion warnings surface honestly", wsrc2.includes("proofread this page in Word") && wsrc2.includes("cell grids are approximated"));
 ck("structure preview shown before download", wsrc2.includes("Structure preview (first 60 blocks)"));
+
+console.log("\n35. Internal linking & sitemap freshness (indexing levers)");
+// Every tool page must link into the editorial catalog: tool pages are the URLs
+// crawlers already visit, so they are how the guides get discovered.
+const rails = TOOLS.map((t) => guidesForTool(t.slug, 3));
+ck("every tool page carries a guide rail", rails.every((r) => r.length >= 2), String(Math.min(...rails.map((r) => r.length))));
+ck("guide rails stay short (3 max)", rails.every((r) => r.length <= 3));
+ck("guide rails have no duplicates", rails.every((r) => new Set(r.map((a) => a.slug)).size === r.length));
+ck("a tool's own guide leads its rail", ARTICLES.every((a) => guidesForTool(a.tool, 3)[0].slug === a.slug));
+const reached = new Set(rails.flat().map((a) => a.slug));
+ck("every guide is reachable from a tool page", ARTICLES.every((a) => reached.has(a.slug)), ARTICLES.filter((a) => !reached.has(a.slug)).map((a) => a.slug).join());
+ck("tool→guide internal links number in the hundreds", rails.flat().length >= 100, String(rails.flat().length));
+// Category hygiene: near-duplicate category strings split /blog into two
+// sections that look like the same section.
+const cats = [...new Set(ARTICLES.map((a) => a.category))];
+ck("blog categories are distinct strings", cats.length === 7, cats.join(" | "));
+ck("no plural/singular category drift", !cats.some((c) => c.includes("PDFs")), cats.join(" | "));
+const tsSrc = src("components/ToolShell.js");
+ck("ToolShell imports guidesForTool", tsSrc.includes("import { ARTICLES, guidesForTool } from \"@/lib/articles\""));
+ck("ToolShell renders the guide rail", tsSrc.includes("Guides that go deeper") && tsSrc.includes("href={`/blog/${a.slug}`}"));
+ck("the rail excludes the guide already shown at the top", tsSrc.includes(".filter((a) => a.slug !== (guide && guide.slug))"));
+ck("the rail links to the guide index", tsSrc.includes("<Link href=\"/blog\""));
+// Sitemap freshness must be truthful — a build timestamp changed every deploy
+// while the pages did not, which teaches crawlers to ignore lastmod.
+const smSrc = src("app/sitemap.js");
+const { CONTENT_DATE } = await import("../app/sitemap.js");
+ck("sitemap derives its freshness date from the catalog", smSrc.includes("export const CONTENT_DATE = ARTICLES.reduce("));
+ck("index pages carry the real content date", smSrc.includes("lastModified: new Date(CONTENT_DATE)"));
+ck("guides carry their own updated date", smSrc.includes("lastModified: new Date(a.updatedISO)"));
+ck("freshness is computed from ISO dates, never display strings", smSrc.includes("a.updatedISO > max"));
+// The catalog stores `published` as ISO and `updated` as a display string
+// ("16 November 2026"); comparing those directly ranks 9 November after
+// 16 November, so dates go through isoDate() before anything reads them.
+ck("ISO passthrough", isoDate("2026-11-16") === "2026-11-16");
+ck("display date parses to ISO", isoDate("16 November 2026") === "2026-11-16", String(isoDate("16 November 2026")));
+ck("single-digit day parses", isoDate("9 November 2026") === "2026-11-09", String(isoDate("9 November 2026")));
+ck("day-before-month ordering is not confused", isoDate("9 November 2026") < isoDate("16 November 2026"));
+ck("unparseable dates return null, not a wrong date", isoDate("last tuesday") === null && isoDate("") === null && isoDate(undefined) === null);
+ck("unknown month names return null", isoDate("16 Smarch 2026") === null);
+ck("every guide has a machine-readable update date", ARTICLES.every((a) => /^\d{4}-\d{2}-\d{2}$/.test(a.updatedISO)), ARTICLES.filter((a) => !/^\d{4}-\d{2}-\d{2}$/.test(a.updatedISO)).map((a) => a.slug).join());
+ck("a guide is never updated before it was published", ARTICLES.every((a) => a.updatedISO >= a.published), ARTICLES.filter((a) => a.updatedISO < a.published).map((a) => a.slug).join());
+ck("sitemap freshness equals the newest real edit", CONTENT_DATE === ARTICLES.reduce((m, a) => (a.updatedISO > m ? a.updatedISO : m), "0"), CONTENT_DATE);
+ck("no build-time timestamp left in the sitemap", !smSrc.includes("const now = new Date()"));
+const smTools = smSrc.slice(smSrc.indexOf("...TOOLS.map"), smSrc.indexOf("...SITE_PAGES.map"));
+ck("untracked tool pages claim no lastmod", !smTools.includes("lastModified"), smTools.replace(/\s+/g, " ").slice(0, 120));
 
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 

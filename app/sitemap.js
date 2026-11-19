@@ -12,27 +12,35 @@ export const SITE_PAGES = [
   { path: "/disclaimer", changeFrequency: "yearly", priority: 0.3 },
 ];
 
+// Truthful freshness. The index pages really do change when a guide is
+// published, so they carry the date of the newest edit in the catalog.
+// A build timestamp instead changed on every deploy while the pages stayed
+// identical — that is how a sitemap teaches a crawler to ignore lastmod.
+// URLs whose content is not date-tracked (tools, legal pages) carry no
+// lastmod at all, which is valid, rather than a date that means nothing.
+export const CONTENT_DATE = ARTICLES.reduce(
+  (max, a) => (a.updatedISO > max ? a.updatedISO : max),
+  ARTICLES.length ? ARTICLES[0].updatedISO : "2026-11-01"
+);
+
 export default function sitemap() {
-  const now = new Date();
   return [
-    { url: SITE_URL, lastModified: now, changeFrequency: "weekly", priority: 1 },
-    { url: `${SITE_URL}/tools`, lastModified: now, changeFrequency: "weekly", priority: 0.9 },
+    { url: SITE_URL, lastModified: new Date(CONTENT_DATE), changeFrequency: "weekly", priority: 1 },
+    { url: `${SITE_URL}/tools`, changeFrequency: "weekly", priority: 0.9 },
     ...TOOLS.map((t) => ({
       url: `${SITE_URL}/tools/${t.slug}`,
-      lastModified: now,
       changeFrequency: "monthly",
       priority: 0.85,
     })),
     ...SITE_PAGES.map((p) => ({
       url: `${SITE_URL}${p.path}`,
-      lastModified: now,
       changeFrequency: p.changeFrequency,
       priority: p.priority,
     })),
-    { url: `${SITE_URL}/blog`, lastModified: now, changeFrequency: "weekly", priority: 0.7 },
+    { url: `${SITE_URL}/blog`, lastModified: new Date(CONTENT_DATE), changeFrequency: "weekly", priority: 0.7 },
     ...ARTICLES.map((a) => ({
       url: `${SITE_URL}/blog/${a.slug}`,
-      lastModified: new Date(a.published),
+      lastModified: new Date(a.updatedISO),
       changeFrequency: "monthly",
       priority: 0.65,
     })),

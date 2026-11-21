@@ -106,3 +106,7 @@ most direct lever on the indexed count in the meantime.
 3. Once a week: Request-Indexing batch of 10 older URLs + a GSC screenshot
 4. Bing Webmaster Tools: decide and set up once (it is a second discovery path
    and it costs 10 minutes)
+5. Once after each big deploy: the 2-minute browser runtime check in
+   `docs/browser-runtime-checklist.md` — the agent verifies rendered HTML and
+   served files, but only a real browser can show runtime JS/WASM errors,
+   consent behaviour and the live ad-loader state

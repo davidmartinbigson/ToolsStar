@@ -60,6 +60,19 @@ Publisher: `ca-pub-4596969703585504`. One account only, forever.
 | 20 Nov | Vercel production verified at `24dee9c`; cron registered (`/api/cron/fb-post`, 15:30 UTC) | Live |
 | 20 Nov | `scripts/adsense-audit.mjs` run against a production-identical local build (AdSense env set) | **51/51 checks pass** — no technical blocker |
 | 20 Nov | Live domain spot-check: `/ads.txt`, `/robots.txt`, `/sitemap.xml` | Correct publisher record, allow-all robots, 85 URLs with truthful lastmod |
+| 21 Nov | GSC Page indexing screenshot #1 (owner) | Indexed **18** (was 17); not indexed 63 = discovered-not-indexed **62** (was 56), crawled-not-indexed **0** (was 1), redirect 1 |
+| 21 Nov | GSC Sitemaps (owner) | sitemap re-read **20 Nov** — the day after the internal-linking deploy — discovered pages **85** (was 79), Success |
+
+**Reading of the 21 Nov numbers.** The funnel is widening before it fills: the
+sitemap was re-read the day after the internal-linking + truthful-lastmod
+deploy, discovered pages went 79 → 85 (every route is now in the pipeline), and
+discovered-not-indexed *rose* (56 → 62) because more URLs entered the queue —
+that is the expected shape of "discovery first, judgement later". Indexing
+itself moved +1 (17 → 18), and crawled-not-indexed at 0 means nothing is being
+crawled and then declined. So: direction correct, speed slow. The fast-track
+(35+ by ~25 Nov) is now unlikely; the ~29 Nov screenshot decides between the
+1–7 Dec window and an 8–14 Dec slip, and the Request-Indexing batch is the
+most direct lever on the indexed count in the meantime.
 | ~22 Nov | GSC Page indexing screenshot #1 | pending |
 | ~29 Nov | GSC Page indexing screenshot #2 | pending |
 | ~30 Nov | Final audit | pending |

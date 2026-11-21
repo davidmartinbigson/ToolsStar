@@ -43,7 +43,7 @@ Publisher: `ca-pub-4596969703585504`. One account only, forever.
 | 2 | **26–27 guides** live (25 today), each ≥800 words, ≥4 `h2`, ≥3 FAQ, unique title/description | Agent writes and ships them |
 | 3 | Owner's three recurring tasks done for the week: Request-Indexing batch of 10 older URLs, Bing Webmaster Tools added (yes/no decision), daily social posts going out | Owner |
 | 4 | Optional accelerator: one external launch (Product Hunt / Hacker News / a relevant subreddit) so the domain has at least one non-social inbound signal | Owner + agent kit |
-| 5 | Agent's **final audit** passes: crawl of every route type, robots + sitemap, ads.txt served with the right publisher line, 404 behaviour, JSON-LD on tools and guides, legal pages, no console errors, no broken internal links | Agent |
+| 5 | Agent's **final audit** passes: `node scripts/adsense-audit.mjs` (run against a production-identical build, then against the live domain where reachable) — ads.txt record, robots, sitemap completeness, the loader script in `<head>`, no empty ad placeholders, titles/descriptions/canonicals, no noindex, JSON-LD on tools and guides, internal linking, trust pages, 404 behaviour, posting cron inert-until-configured | Agent |
 
 ## Evidence log
 
@@ -58,6 +58,8 @@ Publisher: `ca-pub-4596969703585504`. One account only, forever.
 | 18 Nov | Owner published 2 posts manually; queue re-synced | First organic social signal |
 | 19–20 Nov | Internal linking + sitemap freshness PR | 156 tool→guide links, all 25 guides reachable, truthful `lastmod` |
 | 20 Nov | Vercel production verified at `24dee9c`; cron registered (`/api/cron/fb-post`, 15:30 UTC) | Live |
+| 20 Nov | `scripts/adsense-audit.mjs` run against a production-identical local build (AdSense env set) | **51/51 checks pass** — no technical blocker |
+| 20 Nov | Live domain spot-check: `/ads.txt`, `/robots.txt`, `/sitemap.xml` | Correct publisher record, allow-all robots, 85 URLs with truthful lastmod |
 | ~22 Nov | GSC Page indexing screenshot #1 | pending |
 | ~29 Nov | GSC Page indexing screenshot #2 | pending |
 | ~30 Nov | Final audit | pending |

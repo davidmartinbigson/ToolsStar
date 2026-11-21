@@ -1008,6 +1008,17 @@ ck("no build-time timestamp left in the sitemap", !smSrc.includes("const now = n
 const smTools = smSrc.slice(smSrc.indexOf("...TOOLS.map"), smSrc.indexOf("...SITE_PAGES.map"));
 ck("untracked tool pages claim no lastmod", !smTools.includes("lastModified"), smTools.replace(/\s+/g, " ").slice(0, 120));
 
+// The resubmission gate (docs/adsense-resubmit-gate.md) condition 5 must stay
+// executable rather than a promise: the audit script is the evidence.
+const auditSrc = src("scripts/adsense-audit.mjs");
+ck("adsense audit script ships with the repo", existsSync("scripts/adsense-audit.mjs"));
+ck("audit checks the ads.txt publisher record", auditSrc.includes("google.com, ${PUB}, DIRECT, f08c47fec0942fa0"));
+ck("audit checks the loader is server-rendered in head", auditSrc.includes("adsbygoogle.js") && auditSrc.includes("</head>"));
+ck("audit rejects empty ad placeholders before approval", auditSrc.includes("no empty ad placeholders"));
+ck("audit checks indexability signals", ["noindex", "canonical", "SoftwareApplication", "FAQPage"].every((k) => auditSrc.includes(k)));
+ck("audit checks 404 behaviour and the posting cron", auditSrc.includes("returns 404") && auditSrc.includes("/api/cron/fb-post"));
+ck("audit fails loudly (non-zero exit) on any failure", auditSrc.includes("process.exitCode = 1"));
+
 /* ══════════════════════════════ report ══════════════════════════════════════ */
 
 const total = pass + fails.length;

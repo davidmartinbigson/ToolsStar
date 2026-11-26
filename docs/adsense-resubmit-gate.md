@@ -40,7 +40,7 @@ Publisher: `ca-pub-4596969703585504`. One account only, forever.
 | # | Condition | Owner |
 | --- | --- | --- |
 | 1 | Page indexing has **risen** from 17 (target 30+, ideally 35–40) in the GSC Page indexing report | Owner sends the screenshot; agent reads it |
-| 2 | **26–27 guides** live (25 today), each ≥800 words, ≥4 `h2`, ≥3 FAQ, unique title/description | Agent writes and ships them |
+| 2 | **26+ guides** live — **28 as of 21 Nov** (original target 26–27), each ≥800 words, ≥4 `h2`, ≥3 FAQ, unique title/description | Agent writes and ships them — **met with margin** |
 | 3 | Owner's three recurring tasks done for the week: Request-Indexing batch of 10 older URLs, Bing Webmaster Tools added (yes/no decision), daily social posts going out | Owner |
 | 4 | Optional accelerator: one external launch (Product Hunt / Hacker News / a relevant subreddit) so the domain has at least one non-social inbound signal | Owner + agent kit |
 | 5 | Agent's **final audit** passes: `node scripts/adsense-audit.mjs` (run against a production-identical build, then against the live domain where reachable) — ads.txt record, robots, sitemap completeness, the loader script in `<head>`, no empty ad placeholders, titles/descriptions/canonicals, no noindex, JSON-LD on tools and guides, internal linking, trust pages, 404 behaviour, posting cron inert-until-configured | Agent |
@@ -62,6 +62,7 @@ Publisher: `ca-pub-4596969703585504`. One account only, forever.
 | 20 Nov | Live domain spot-check: `/ads.txt`, `/robots.txt`, `/sitemap.xml` | Correct publisher record, allow-all robots, 85 URLs with truthful lastmod |
 | 21 Nov | GSC Page indexing screenshot #1 (owner) | Indexed **18** (was 17); not indexed 63 = discovered-not-indexed **62** (was 56), crawled-not-indexed **0** (was 1), redirect 1 |
 | 21 Nov | GSC Sitemaps (owner) | sitemap re-read **20 Nov** — the day after the internal-linking deploy — discovered pages **85** (was 79), Success |
+| 21 Nov | Guides #26–#28 shipped (MP3 bitrate maths, ringtone length rules, favicon sizes) | **28 guides live** — substance condition met with margin |
 
 **Reading of the 21 Nov numbers.** The funnel is widening before it fills: the
 sitemap was re-read the day after the internal-linking + truthful-lastmod
